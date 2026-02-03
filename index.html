@@ -342,9 +342,9 @@
                                 const Fy2_g = fx_local_p2 * sin + fy_local_p2 * cos;
                                 const M2_g = m_local_2;
 
-                                // Subtract FEA from Global Load Vector
-                                addGlobalF(el.n1, -Fx1_g, -Fy1_g, -M1_g);
-                                addGlobalF(el.n2, -Fx2_g, -Fy2_g, -M2_g);
+                                // [MODIFY] Change signs from negative (-) to positive (+) to apply ACTION correctly
+                                addGlobalF(el.n1, Fx1_g, Fy1_g, M1_g);
+                                addGlobalF(el.n2, Fx2_g, Fy2_g, M2_g);
 
                                 // Store for internal calculation
                                 if (!fixedEndForces[el.id]) fixedEndForces[el.id] = Array(6).fill(0);
@@ -423,9 +423,10 @@
                         // CORRECT MATRIX MULTIPLICATION: Row i, Col j matches Vector j
                         for(let i=0; i<6; i++) for(let j=0; j<6; j++) f_local[i] += k_local[i][j] * u_local[j];
 
-                        // Add Fixed End Actions if any
+                        // [MODIFY] Change += to -= to convert Action (on Node) to Reaction (on Member)
+                        // This corrects the shear, moment, and reaction calculations
                         if (fixedEndForces[el.id]) {
-                            for(let k=0; k<6; k++) f_local[k] += fixedEndForces[el.id][k];
+                            for(let k=0; k<6; k++) f_local[k] -= fixedEndForces[el.id][k];
                         }
 
                         // REACTION CALC: Transform local forces to global and accumulate at nodes
@@ -479,7 +480,8 @@
 
         const CanvasView = ({ 
             nodes, elements, supports, loads, results, 
-            viewSettings, tool, selectedNode, selectedElement, onCanvasInteract, textSize
+            viewSettings, tool, selectedNode, selectedElement, selectedLoad, 
+            onCanvasInteract, textSize, isDarkMode, t // <--- ADD t PROP
         }) => {
             const canvasRef = useRef(null);
             const [pan, setPan] = useState({ x: 100, y: 500 });
@@ -538,9 +540,9 @@
                             
                             // Load P opposes the Internal Shear/Axial definition usually? 
                             // Standard cut: V is down face. Sum Fy=0 -> V - V_start + P = 0 -> V = V_start - P
-                            Vx -= Py;
-                            Ax -= Px;
-                            Mx -= Py * (x - dist);
+                            Vx += Py;
+                            Ax += Px;
+                            Mx += Py * (x - dist);
                         }
                     } 
                     else if (l.type === 'dist') {
@@ -570,9 +572,9 @@
                             const Wx = area * Math.cos(relAng);
                             const Wy = area * Math.sin(relAng);
                             
-                            Vx -= Wy;
-                            Ax -= Wx;
-                            Mx -= Wy * centroidDist;
+                            Vx += Wy;
+                            Ax += Wx;
+                            Mx += Wy * centroidDist;
                         }
                     }
                 });
@@ -670,7 +672,7 @@
 
             const toScreen = (x, y) => ({ x: pan.x + x * zoom, y: pan.y - y * zoom });
             const toWorld = (sx, sy) => ({ x: (sx - pan.x) / zoom, y: (pan.y - sy) / zoom });
-
+            useEffect(() => { draw(); }, [draw, selectedLoad]);
             const draw = useCallback(() => {
                 const canvas = canvasRef.current;
                 if (!canvas) return;
@@ -691,22 +693,36 @@
                 };
                 const w = canvas.width, h = canvas.height;
 
+                // Theme Colors
+                const colors = isDarkMode ? {
+                    bg: '#0f172a', grid: '#1e293b', text: '#94a3b8', 
+                    node: '#f8fafc', trussDef: '#94a3b8', beamDef: '#cbd5e1'
+                } : {
+                    bg: '#ffffff', grid: '#e2e8f0', text: '#64748b', 
+                    node: '#1e293b', trussDef: '#64748b', beamDef: '#475569'
+                };
+
                 // Clear & Grid
-                ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, w, h);
-                ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 1; ctx.beginPath();
+                ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, w, h);
+                ctx.strokeStyle = colors.grid; ctx.lineWidth = 1; ctx.beginPath();
 
                 const startX = Math.floor((-pan.x / zoom) / gridStep);
                 const endX = Math.floor(((w - pan.x) / zoom) / gridStep) + 1;
                 const startY = Math.floor(((pan.y - h) / zoom) / gridStep);
                 const endY = Math.floor((pan.y / zoom) / gridStep) + 1;
 
-                ctx.font = '10px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                // MODIFY: Use textSize and dynamic offsets
+                ctx.font = `${textSize}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                const pad = textSize * 0.5;
 
                 for (let i = startX; i <= endX; i++) { 
                     const val = i * gridStep;
                     const p = toScreen(val, 0); 
                     ctx.moveTo(p.x, 0); ctx.lineTo(p.x, h);
-                    if (i % 2 === 0) { ctx.fillStyle = '#475569'; ctx.fillText(val.toFixed(3).replace(/\.?0+$/, '') + 'm', p.x + 2, h - 15); }
+                    if (i % 2 === 0) { 
+                        ctx.fillStyle = '#475569'; 
+                        ctx.fillText(val.toFixed(3).replace(/\.?0+$/, '') + 'm', p.x + 2, h - (textSize + 5)); 
+                    }
                 }
                 for (let i = startY; i <= endY; i++) { 
                     const val = i * gridStep;
@@ -734,6 +750,39 @@
                         ctx.strokeStyle = '#334155'; ctx.setLineDash([5, 5]);
                         ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
                     }
+                    // DRAW TRUSS AXIAL LABEL
+                    if (results && el.type === 'truss') {
+                        const res = results.memberForces.find(f => f.id === el.id);
+                        if (res && Math.abs(res.axial) > 0.01) {
+                            const midX = (drawP1.x + drawP2.x) / 2;
+                            const midY = (drawP1.y + drawP2.y) / 2;
+                            const dx = drawP2.x - drawP1.x;
+                            const dy = drawP2.y - drawP1.y;
+                            let angle = Math.atan2(dy, dx);
+
+                            // Keep text upright
+                            if (angle > Math.PI / 2 || angle < -Math.PI / 2) {
+                                angle += Math.PI;
+                            }
+
+                            ctx.save();
+                            ctx.translate(midX, midY);
+                            ctx.rotate(angle);
+                            
+                            // Text Style
+                            ctx.fillStyle = '#ffffff'; 
+                            ctx.font = `bold ${textSize}px monospace`;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'bottom';
+                            
+                            // Shadow for contrast
+                            ctx.shadowColor = isDarkMode ? '#000' : '#fff'; 
+                            ctx.shadowBlur = 4; 
+                            ctx.fillText(`${res.axial.toFixed(2)}kN`, 0, -4);
+                            
+                            ctx.restore();
+                        }
+                    }
 
                     // Element Selection Highlight
                     if (selectedElement === el.id) {
@@ -742,8 +791,36 @@
                         ctx.shadowBlur = 0;
                     }
 
-                    // Style based on Type
-                    ctx.strokeStyle = el.type === 'truss' ? '#94a3b8' : '#cbd5e1'; 
+                    // Style based on Type & Results
+                    let strokeColor = el.type === 'truss' ? '#94a3b8' : '#cbd5e1'; // Default
+                    
+                    if (results && el.type === 'truss') {
+                        const res = results.memberForces.find(f => f.id === el.id);
+                        if (res) {
+                            const val = res.axial;
+                            // Normalize based on global max axial force found in stats
+                            const maxA = (plotData && plotData.stats && plotData.stats.maxA > 0.1) ? plotData.stats.maxA : 1; 
+                            const ratio = Math.min(1, Math.abs(val) / maxA);
+
+                            if (Math.abs(val) < 0.001) {
+                                strokeColor = '#ffffff';
+                            } else if (val > 0) {
+                                // Tension (Blue): Mix White (255,255,255) -> Blue-500 (59,130,246)
+                                const r = Math.round(255 + (59 - 255) * ratio);
+                                const g = Math.round(255 + (130 - 255) * ratio);
+                                const b = Math.round(255 + (246 - 255) * ratio);
+                                strokeColor = `rgb(${r},${g},${b})`;
+                            } else {
+                                // Compression (Red): Mix White (255,255,255) -> Red-500 (239,68,68)
+                                const r = Math.round(255 + (239 - 255) * ratio);
+                                const g = Math.round(255 + (68 - 255) * ratio);
+                                const b = Math.round(255 + (68 - 255) * ratio);
+                                strokeColor = `rgb(${r},${g},${b})`;
+                            }
+                        }
+                    }
+
+                    ctx.strokeStyle = strokeColor;
                     ctx.lineWidth = 3;
                     ctx.beginPath();
 
@@ -754,12 +831,25 @@
                             ctx.moveTo(drawP1.x, drawP1.y);
                             const dx = drawP2.x - drawP1.x, dy = drawP2.y - drawP1.y;
                             const L_scr = Math.sqrt(dx*dx + dy*dy);
-                            const nx = -dy / L_scr, ny = dx / L_scr; // Normal vector
+                            
+                            // Calculate base Normal Vector
+                            let nx = -dy / L_scr;
+                            let ny = dx / L_scr;
+
+                            // FLIP FOR COLUMNS ONLY: 
+                            // If element is predominantly vertical (dy > dx), invert the normal.
+                            // This fixes the Left/Right direction for columns without affecting the Beams.
+                            if (Math.abs(dy) > Math.abs(dx)) {
+                                nx = nx;
+                                ny = ny;
+                            }
+                            
                             const s = viewSettings.defScale;
 
                             d.pts.forEach(pt => {
                                 // v_disp is in meters. Convert to pixels (zoom). Scale by defScale (s).
-                                const off = pt.v_disp * s * zoom; 
+                                // MODIFY: Added negative sign (-) to 'pt.v_disp' to flip the diagram
+                                const off = -pt.v_disp * s * zoom; 
                                 ctx.lineTo(drawP1.x + pt.t * dx + nx * off, drawP1.y + pt.t * dy + ny * off);
                             });
                             ctx.lineTo(drawP2.x, drawP2.y);
@@ -795,52 +885,56 @@
                     const elLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
                     
                     elLoads.forEach(l => {
+                        const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
+                        
+                        // Style Config
+                        const baseColor = isSelected ? '#f87171' : '#facc15'; // Bright Red vs Yellow
+                        const distColor = isSelected ? '#f87171' : '#eab308';
+                        const fillColor = isSelected ? 'rgba(248, 113, 113, 0.3)' : 'rgba(234, 179, 8, 0.2)';
+
+                        ctx.save(); // Isolate styles
+                        if (isSelected) {
+                            ctx.shadowColor = baseColor;
+                            ctx.shadowBlur = 15; // Glow effect
+                            ctx.lineWidth = 3;
+                        } else {
+                            ctx.lineWidth = 1; // Reset width for non-selected
+                        }
+
                         const dx = drawP2.x - drawP1.x, dy = drawP2.y - drawP1.y;
-                        const len_scr = Math.sqrt(dx*dx + dy*dy); // Screen length
-                        // Physical length
+                        const len_scr = Math.sqrt(dx*dx + dy*dy); 
                         const n1 = nodes[el.n1], n2 = nodes[el.n2];
                         const L_phys = Math.sqrt((n2.x - n1.x)**2 + (n2.y - n1.y)**2);
-                        
-                        // MODIFY: Uniform direction for all members (removes mirroring on columns)
                         const dir = 1;
                         
                         if (l.type === 'point_span') {
-                            // MODIFY: Explicit undefined check allowing 0
                             const dist = parseFloat(l.dist !== undefined ? l.dist : L_phys/2);
                             const t = dist / L_phys;
                             const px = drawP1.x + t * dx;
                             const py = drawP1.y + t * dy;
                             
-                            // Draw Arrow
                             const mag = parseFloat(l.mag || 10);
-                            // ANGLE LOGIC: Normal-Relative
                             let ang = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
                             if (l.angleRef === 'local') {
-                                        const beamAngWorld = Math.atan2(n2.y - n1.y, n2.x - n1.x);
-                                        ang += beamAngWorld; // No -90 offset
-                                    }
-                                    const scrAng = -ang; // Flip for screen
+                                const beamAngWorld = Math.atan2(n2.y - n1.y, n2.x - n1.x);
+                                ang += beamAngWorld;
+                            }
+                            const scrAng = -ang; 
+                            const arrowLen = 20;
+                            const tax = px - dir * Math.cos(scrAng) * arrowLen;
+                            const tay = py - dir * Math.sin(scrAng) * arrowLen;
                             
-                                    const arrowLen = 20;
-                                    // MODIFY: Use 'dir' to conditionally flip columns while keeping beams correct
-                                    const tax = px - dir * Math.cos(scrAng) * arrowLen;
-                                    const tay = py - dir * Math.sin(scrAng) * arrowLen;
-                                    
-                                    ctx.strokeStyle = '#facc15'; ctx.fillStyle = '#facc15'; ctx.lineWidth = 2;
-                                    ctx.beginPath(); ctx.moveTo(tax, tay); ctx.lineTo(px, py); ctx.stroke();
-                                    // MODIFY: Use ArrowHead
-                                    drawArrowHead(px, py, Math.atan2(py - tay, px - tax), '#facc15');
-                                    // Text
-                                    ctx.fillStyle = '#fef08a'; ctx.fillText(`${mag}kN`, tax, tay - 5);
+                            ctx.strokeStyle = baseColor; ctx.fillStyle = baseColor;
+                            
+                            ctx.beginPath(); ctx.moveTo(tax, tay); ctx.lineTo(px, py); ctx.stroke();
+                            drawArrowHead(px, py, Math.atan2(py - tay, px - tax), baseColor);
+                            
+                            ctx.fillStyle = '#fef08a'; 
+                            ctx.fillText(`${mag}kN`, tax, tay - (textSize * 0.5));
                         }
                         else if (l.type === 'dist') {
-                            // Physical length is already calculated above as L_phys
-                            
-                            // 1. Get raw inputs
-                            let raw_d1 = parseFloat(l.dStart || 0);
-                            let raw_d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : L_phys);
-                            
-                            // 2. CLAMP to element limits to prevent drawing overshoot
+                            const raw_d1 = parseFloat(l.dStart || 0);
+                            const raw_d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : L_phys);
                             const d1 = Math.max(0, Math.min(L_phys, raw_d1));
                             const d2 = Math.max(0, Math.min(L_phys, raw_d2));
                             
@@ -850,30 +944,25 @@
                             const t1 = d1 / L_phys;
                             const t2 = d2 / L_phys;
                             
-                            // ... rest of the positioning and drawing logic ...
                             const pStart = { x: drawP1.x + t1*dx, y: drawP1.y + t1*dy };
                             const pEnd = { x: drawP1.x + t2*dx, y: drawP1.y + t2*dy };
-                            // NEW ANGLE LOGIC
+                            
                             let ang = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
                             if (l.angleRef === 'local') {
                                 const beamAngWorld = Math.atan2(n2.y - n1.y, n2.x - n1.x);
-                                ang += beamAngWorld; // No -90 offset
+                                ang += beamAngWorld;
                             }
-                            const scrAng = -ang; // Flip Y for screen
+                            const scrAng = -ang; 
                             const nx = Math.cos(scrAng), ny = Math.sin(scrAng);
-                            
-                            // Scale drawing: 1 unit load = 1 pixel usually too small. Let's say 1kN/m = 2px
                             const scale = 2;  
                             
-                            // 4 Points for Trapezoid
                             const p1_base = pStart;
                             const p2_base = pEnd;
-                            // MODIFY: Apply 'dir' multiplier
                             const p2_tip = { x: pEnd.x - dir * nx * w2 * scale, y: pEnd.y - dir * ny * w2 * scale }; 
                             const p1_tip = { x: pStart.x - dir * nx * w1 * scale, y: pStart.y - dir * ny * w1 * scale };
                             
-                            ctx.fillStyle = 'rgba(234, 179, 8, 0.2)';
-                            ctx.strokeStyle = '#eab308'; ctx.lineWidth = 1;
+                            ctx.fillStyle = fillColor;
+                            ctx.strokeStyle = distColor;
                             
                             ctx.beginPath();
                             ctx.moveTo(p1_base.x, p1_base.y);
@@ -882,26 +971,25 @@
                             ctx.lineTo(p1_tip.x, p1_tip.y);
                             ctx.closePath();
                             ctx.fill(); ctx.stroke();
-                            // MODIFY: Add Text Labels for Distributed Load
-                            ctx.fillStyle = '#fef08a'; ctx.font = '9px monospace';
-                            ctx.fillText(`${w1}kN/m`, p1_tip.x, p1_tip.y - 5);
-                            if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${w2}kN/m`, p2_tip.x, p2_tip.y - 5);
-                            // Draw Arrows inside
+
+                            ctx.fillStyle = '#fef08a'; 
+                            ctx.fillText(`${w1}kN/m`, p1_tip.x, p1_tip.y - (textSize * 0.6));
+                            if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${w2}kN/m`, p2_tip.x, p2_tip.y - (textSize * 0.6));
+                            
                             const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
                             for(let i=0; i<=count; i++) {
                                 const s = i/count;
                                 const tx = p1_base.x + s*(p2_base.x - p1_base.x);
                                 const ty = p1_base.y + s*(p2_base.y - p1_base.y);
                                 const mag = w1*(1-s) + w2*s;
-                                // MODIFY: Apply 'dir' multiplier
                                 const bx = tx - dir * nx * mag * scale;
                                 const by = ty - dir * ny * mag * scale;
                                 
                                 ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
-                                // MODIFY: Use ArrowHead
-                                drawArrowHead(tx, ty, Math.atan2(ty - by, tx - bx), '#eab308');
+                                drawArrowHead(tx, ty, Math.atan2(ty - by, tx - bx), distColor);
                             }
                         }
+                        ctx.restore(); // Restore context
                     });
 
                     // Results Diagrams (Global Scaled)
@@ -917,10 +1005,12 @@
                                 if (Math.abs(val) < 0.01) return; // Skip zeros
                                 const lx = drawP1.x + t * dx + nx * offsetPx;
                                 const ly = drawP1.y + t * dy + ny * offsetPx;
-                                ctx.fillStyle = color; ctx.font = '10px monospace';
-                                // MODIFY: Include prefix in the text
-                                ctx.fillText(`${prefix}${val.toFixed(2)}${unit}`, lx + 2, ly - 2);
-                                ctx.beginPath(); ctx.arc(lx, ly, 1.5, 0, 2*Math.PI); ctx.fill();
+                                ctx.fillStyle = color; ctx.font = `${textSize}px monospace`;
+                                
+                                // Dynamic padding from the dot
+                                const pad = textSize * 0.4;
+                                ctx.fillText(`${prefix}${val.toFixed(2)}${unit}`, lx + pad, ly - pad);
+                                ctx.beginPath(); ctx.arc(lx, ly, 2, 0, 2*Math.PI); ctx.fill();
                             };
 
                             // Draw BMD
@@ -932,15 +1022,16 @@
                                 let maxVal = 0, maxT = 0, maxOff = 0;
 
                                 d.pts.forEach(pt => {
-                                    const off = -pt.mx * scale; 
+                                    // [MODIFY] Removed negative sign (-) to flip diagram
+                                    const off = pt.mx * scale; 
                                     if(Math.abs(pt.mx) > Math.abs(maxVal)) { maxVal = pt.mx; maxT = pt.t; maxOff = off; }
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-                                // Labels
-                                drawLabel(0, d.pts[0].mx, 'kNm', -d.pts[0].mx*scale, '#fca5a5'); // Start
-                                drawLabel(1, d.pts[d.pts.length-1].mx, 'kNm', -d.pts[d.pts.length-1].mx*scale, '#fca5a5'); // End
+                                // [MODIFY] Updated labels to match new positive direction
+                                drawLabel(0, d.pts[0].mx, 'kNm', d.pts[0].mx*scale, '#fca5a5'); // Start
+                                drawLabel(1, d.pts[d.pts.length-1].mx, 'kNm', d.pts[d.pts.length-1].mx*scale, '#fca5a5'); // End
                                 if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, 'kNm', maxOff, '#ffffff'); // Peak
                             }
 
@@ -953,15 +1044,16 @@
                                 let maxVal = 0, maxT = 0, maxOff = 0;
 
                                 d.pts.forEach(pt => {
-                                    const off = pt.vx * scale;
+                                    // [MODIFY] Added negative sign (-) to flip diagram
+                                    const off = -pt.vx * scale;
                                     if(Math.abs(pt.vx) > Math.abs(maxVal)) { maxVal = pt.vx; maxT = pt.t; maxOff = off; }
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-                                // Labels
-                                drawLabel(0, d.pts[0].vx, 'kN', d.pts[0].vx*scale, '#93c5fd');
-                                drawLabel(1, d.pts[d.pts.length-1].vx, 'kN', d.pts[d.pts.length-1].vx*scale, '#93c5fd');
+                                // [MODIFY] Updated labels to match new negative direction
+                                drawLabel(0, d.pts[0].vx, 'kN', -d.pts[0].vx*scale, '#93c5fd');
+                                drawLabel(1, d.pts[d.pts.length-1].vx, 'kN', -d.pts[d.pts.length-1].vx*scale, '#93c5fd');
                                 if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, 'kN', maxOff, '#ffffff');
                             }
 
@@ -971,12 +1063,14 @@
                                 ctx.fillStyle = 'rgba(236, 72, 153, 0.2)'; ctx.strokeStyle = '#ec4899'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
                                 d.pts.forEach(pt => {
-                                    const off = pt.ax * scale; 
+                                    // [MODIFY] Added negative sign (-) to flip diagram
+                                    const off = -pt.ax * scale; 
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
                                 
-                                drawLabel(0.5, d.pts[Math.floor(d.pts.length/2)].ax, 'kN', d.pts[Math.floor(d.pts.length/2)].ax * scale, '#f9a8d4');
+                                // [MODIFY] Updated label to match new negative direction
+                                drawLabel(0.5, d.pts[Math.floor(d.pts.length/2)].ax, 'kN', -d.pts[Math.floor(d.pts.length/2)].ax * scale, '#f9a8d4');
                             }
                             
                             // Deformed Max Label
@@ -1041,34 +1135,13 @@
                         });
 
                         // 3. Subtract any Applied Nodal Loads at this support (Reaction must oppose them too)
-                        // Actually, the Member Force already includes the effect of the load transfer. 
-                        // Standard Statics: The member pushes on the support. The support pushes back.
-                        // We visualized the "Force of Member on Node". The Reaction is the "Force of Support on Node".
-                        // So Reaction = -MemberForce.
-                        
-                        // However, we must also account for direct Nodal Loads applied AT the support.
-                        // Equilibrium: R + F_load + F_member = 0  =>  R = -(F_load + F_member)
-                        // Let's add the nodal loads to the member sum before inverting.
-                        
                         const directLoad = loads.find(l => l.type === 'point' && l.nodeId === sup.nodeId);
                         if(directLoad) {
-                            rx -= parseFloat(directLoad.fx || 0); // Subtract because we inverted the equation above?
-                            // Wait, simpler: Sum of Forces = 0.
-                            // R + Load + MemberForces = 0.
-                            // R = -Load - MemberForces.
-                            // The MemberForces we extracted are "Force on Node". So yes.
-                            
-                            // NOTE: The previous 'rx' accumulation was "Force exerted by Member on Node".
-                            // So total Action = rx (from members) + directLoad.
-                            rx += parseFloat(directLoad.fx || 0);
-                            ry += parseFloat(directLoad.fy || 0);
-                            rm += parseFloat(directLoad.m || 0);
+                            // MODIFY: Add load to the Action accumulator (Total Action = Member Force + External Load)
+                            rx -= parseFloat(directLoad.fx || 0);
+                            ry -= parseFloat(directLoad.fy || 0);
+                            rm -= parseFloat(directLoad.m || 0);
                         }
-
-                        // INVERT to get Reaction
-                        rx = -rx;
-                        ry = -ry;
-                        rm = -rm;
 
                         // 4. Draw
                         ctx.font = `${textSize}px monospace`;
@@ -1076,6 +1149,9 @@
                         const eps = 0.01;
 
                         // Rx: Draw to the LEFT (-X direction) relative to node
+                        const gap = textSize * 0.8;
+
+                        // Rx
                         if (Math.abs(rx) > eps) {
                             const offset = -45; 
                             const startX = offset;
@@ -1085,32 +1161,31 @@
                             drawArrowHead(endX, 0, rx > 0 ? 0 : Math.PI, '#ef4444');
                             
                             ctx.textAlign = 'right';
-                            ctx.fillText(`Rx: ${Math.abs(rx).toFixed(2)}kN`, offset - 5, -5);
+                            // Dynamic spacing
+                            ctx.fillText(`Rx: ${Math.abs(rx).toFixed(2)}kN`, offset - gap, -(textSize * 0.3));
                             ctx.textAlign = 'left'; 
                         }
 
-                        // Ry: Draw at the BOTTOM (+Y direction) relative to node
+                        // Ry
                         if (Math.abs(ry) > eps) {
                             const offset = 45; 
-                            // Canvas Y is down. We draw below the node (Positive Y offset).
                             const startY = offset;
-                            // If Reaction is UP (Positive Physics Y), visual arrow should point Up (Negative Canvas Y).
-                            // ry > 0 means Upward Force.
                             const endY = offset + (ry > 0 ? -15 : 15);
 
                             ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(0, endY); ctx.stroke();
                             drawArrowHead(0, endY, ry > 0 ? -Math.PI/2 : Math.PI/2, '#ef4444');
                             
-                            ctx.fillText(`Ry: ${Math.abs(ry).toFixed(2)}kN`, 10, offset);
+                            // Dynamic spacing
+                            ctx.fillText(`Ry: ${Math.abs(ry).toFixed(2)}kN`, gap, offset + (textSize * 0.3));
                         }
 
                         // Moment
                         if (Math.abs(rm) > eps) {
                             const r = 25;
-                            ctx.fillText(`Rm: ${Math.abs(rm).toFixed(2)}kNm`, 28, -28);
+                            // Dynamic spacing from circle
+                            ctx.fillText(`Rm: ${Math.abs(rm).toFixed(2)}kNm`, r + gap, -(r + gap));
+                            
                             ctx.beginPath(); 
-                            // CCW is positive. Canvas angle increases CW. 
-                            // 0 is Right. -90 is Up.
                             ctx.arc(0, 0, r, 0, rm > 0 ? -Math.PI/2 : Math.PI/2, rm > 0); 
                             ctx.stroke();
                             
@@ -1173,7 +1248,7 @@
                     if (selectedNode === i) { ctx.fillStyle = '#3b82f6'; ctx.fill(); ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2; ctx.stroke(); ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI); ctx.stroke(); } 
                     else { ctx.fillStyle = '#f8fafc'; ctx.fill(); }
                     
-                    ctx.fillStyle = '#94a3b8'; ctx.font = '10px monospace'; ctx.fillText(i, p.x + 8, p.y - 8);
+                    ctx.fillStyle = '#94a3b8'; ctx.font = `${textSize}px monospace`; ctx.fillText(i, p.x + 8, p.y - 8);
 
                     // Helper for arrowheads
                     const drawArrowHead = (x, y, angle, color) => {
@@ -1193,37 +1268,48 @@
                     // Draw Loads attached to nodes
                     const nodeLoads = loads.filter(l => (!l.type || l.type === 'point' || l.type === 'settlement') && l.nodeId === i);
                     nodeLoads.forEach(l => {
+                        const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
+                        // Select color: Settlement (Purple) vs Force (Yellow) vs Selected (Bright Red)
+                        const color = isSelected ? '#f87171' : (l.type === 'settlement' ? '#a855f7' : '#eab308');
+
+                        ctx.save();
+                        if (isSelected) {
+                            ctx.shadowColor = color;
+                            ctx.shadowBlur = 15;
+                            ctx.lineWidth = 3;
+                        }
+
+                        ctx.strokeStyle = color; ctx.fillStyle = color;
                         const arrowScale = 2;
-                        ctx.font = `${textSize}px monospace`; // USE DYNAMIC SIZE
+                        const gap = textSize * 0.6;
                         
                         if(l.type === 'settlement') {
-                            ctx.fillStyle = '#a855f7'; 
                             let txt = "SETT: ";
                             if(l.dx) txt += `dx=${l.dx}m `;
                             if(l.dy) txt += `dy=${l.dy}m `;
-                            ctx.fillText(txt, p.x - 20, p.y + 20);
+                            ctx.fillText(txt, p.x - (textSize * 2), p.y + (textSize + 10));
                         } else {
-                            ctx.strokeStyle = '#eab308'; ctx.fillStyle = '#eab308';
                             if (l.fx != 0) { 
                                 const tipX = p.x + l.fx*arrowScale;
                                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tipX, p.y); ctx.stroke(); 
-                                drawArrowHead(tipX, p.y, l.fx > 0 ? 0 : Math.PI, '#eab308');
-                                ctx.fillText(`${l.fx}kN`, tipX + (l.fx>0?5:-30), p.y + 3);
+                                drawArrowHead(tipX, p.y, l.fx > 0 ? 0 : Math.PI, color);
+                                const txtOff = l.fx > 0 ? gap : -(textSize * 4); 
+                                ctx.fillText(`${l.fx}kN`, tipX + txtOff, p.y + (textSize * 0.3));
                             }
                             if (l.fy != 0) { 
                                 const tipY = p.y - l.fy*arrowScale;
                                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, tipY); ctx.stroke(); 
-                                drawArrowHead(p.x, tipY, l.fy > 0 ? -Math.PI/2 : Math.PI/2, '#eab308');
-                                ctx.fillText(`${l.fy}kN`, p.x + 5, tipY);
+                                drawArrowHead(p.x, tipY, l.fy > 0 ? -Math.PI/2 : Math.PI/2, color);
+                                ctx.fillText(`${l.fy}kN`, p.x + gap, tipY + (textSize * 0.3));
                             }
                             if (l.m != 0) {
-                                ctx.fillText(`${l.m}kNm`, p.x + 10, p.y - 10);
+                                ctx.fillText(`${l.m}kNm`, p.x + (textSize), p.y - (textSize));
                                 ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, l.m > 0 ? -Math.PI/2 : Math.PI/2, l.m > 0); ctx.stroke();
-                                // Arrow tip for moment (simple approx)
                                 const tipAng = l.m > 0 ? -Math.PI/2 : Math.PI/2;
-                                drawArrowHead(p.x + 12*Math.cos(tipAng), p.y + 12*Math.sin(tipAng), tipAng + (l.m>0? -Math.PI/2 : Math.PI/2), '#eab308');
+                                drawArrowHead(p.x + 12*Math.cos(tipAng), p.y + 12*Math.sin(tipAng), tipAng + (l.m>0? -Math.PI/2 : Math.PI/2), color);
                             }
                         }
+                        ctx.restore();
                     });
                 });
 
@@ -1266,7 +1352,8 @@
                     ctx.strokeStyle = '#60a5fa'; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
                 }
 
-            }, [nodes, elements, supports, loads, results, pan, zoom, viewSettings, tool, selectedNode, selectedElement, mousePos]);
+            // MODIFY: Added 'textSize' to dependencies so it redraws immediately
+            }, [nodes, elements, supports, loads, results, pan, zoom, viewSettings, tool, selectedNode, selectedElement, selectedLoad, mousePos, textSize]); // <--- ADD selectedLoad HERE
 
             // Interaction Handlers
             // Interaction Handlers
@@ -1318,16 +1405,21 @@
                             const vals = getBeamValues(el, x_local, L_phys);
                             
                             const d = plotData.diagrams.find(d => d.id === el.id);
-                            let elMaxM = 0, elMinM = 0;
+                            let stats = { maxM: 0, minM: 0, maxV: 0, minV: 0, maxA: 0, minA: 0 };
+                            
                             if(d && d.pts.length > 0) {
-                                elMaxM = Math.max(...d.pts.map(p => p.mx));
-                                elMinM = Math.min(...d.pts.map(p => p.mx));
+                                stats.maxM = Math.max(...d.pts.map(p => p.mx));
+                                stats.minM = Math.min(...d.pts.map(p => p.mx));
+                                stats.maxV = Math.max(...d.pts.map(p => p.vx));
+                                stats.minV = Math.min(...d.pts.map(p => p.vx));
+                                stats.maxA = Math.max(...d.pts.map(p => p.ax));
+                                stats.minA = Math.min(...d.pts.map(p => p.ax));
                             }
 
                             closest = { 
                                 x: sx, y: sy, 
                                 elId: el.id, x_loc: x_local, ...vals,
-                                maxM: elMaxM, minM: elMinM
+                                ...stats
                             };
                         }
                     });
@@ -1347,36 +1439,141 @@
                 const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
                 const worldPos = toWorld(sx, sy);
 
-                // ADDED: Calculate snapped position to match visual ghost
+                // Snap to grid
                 const snappedPos = {
                     x: Math.round(worldPos.x / gridStep) * gridStep,
                     y: Math.round(worldPos.y / gridStep) * gridStep
                 };
                 
-                // Hit Test Nodes
+                // 1. Hit Test Nodes (Priority)
                 let clickedNodeId = null;
                 nodes.forEach((n, i) => {
                     const p = toScreen(n.x, n.y);
-                    if (Math.sqrt(Math.pow(sx - p.x, 2) + Math.pow(sy - p.y, 2)) < 10) clickedNodeId = i;
+                    // Radius 15px for comfortable clicking
+                    if (Math.sqrt(Math.pow(sx - p.x, 2) + Math.pow(sy - p.y, 2)) < 15) clickedNodeId = i;
                 });
 
-                // Hit Test Elements (Line Distance)
+                // 2. Hit Test Elements
                 let clickedElementId = null;
                 if (clickedNodeId === null) {
+                    let minElDist = 20; // Increased tolerance (was 10)
+                    
                     elements.forEach(el => {
-                        const n1 = nodes[el.n1], n2 = nodes[el.n2];
-                        const p1 = toScreen(n1.x, n1.y), p2 = toScreen(n2.x, n2.y);
-                        // Distance from point (sx,sy) to line segment p1-p2
-                        const L2 = (p2.x-p1.x)**2 + (p2.y-p1.y)**2;
-                        if(L2 == 0) return;
-                        const t = Math.max(0, Math.min(1, ((sx-p1.x)*(p2.x-p1.x) + (sy-p1.y)*(p2.y-p1.y)) / L2));
-                        const projX = p1.x + t * (p2.x - p1.x), projY = p1.y + t * (p2.y - p1.y);
-                        const dist = Math.sqrt((sx-projX)**2 + (sy-projY)**2);
-                        if (dist < 8) clickedElementId = el.id;
+                        const n1 = nodes[el.n1];
+                        const n2 = nodes[el.n2];
+                        const p1 = toScreen(n1.x, n1.y);
+                        const p2 = toScreen(n2.x, n2.y);
+                        
+                        // A. Calculate distance to STRAIGHT Line (Baseline)
+                        let dist = Infinity;
+                        const dx = p2.x - p1.x;
+                        const dy = p2.y - p1.y;
+                        const len_sq = dx*dx + dy*dy;
+
+                        if (len_sq > 0) {
+                            const t = ((sx - p1.x) * dx + (sy - p1.y) * dy) / len_sq;
+                            let xx, yy;
+                            if (t < 0) { xx = p1.x; yy = p1.y; }
+                            else if (t > 1) { xx = p2.x; yy = p2.y; }
+                            else { xx = p1.x + t * dx; yy = p1.y + t * dy; }
+                            dist = Math.sqrt((sx - xx)**2 + (sy - yy)**2);
+                        }
+
+                        // B. If Deformed View is ON, also check distance to the CURVE
+                        // This allows clicking the sagging middle of a beam
+                        if (viewSettings.showDeformed && plotData && el.type !== 'truss') {
+                            const d = plotData.diagrams.find(entry => entry && entry.id === el.id);
+                            if (d && d.pts.length > 1) {
+                                const s = viewSettings.defScale;
+                                const L_scr = Math.sqrt(len_sq);
+                                const nx = -dy / L_scr; 
+                                const ny = dx / L_scr;
+
+                                // Iterate through polyline segments of the curve
+                                for (let k = 0; k < d.pts.length - 1; k++) {
+                                    const ptA = d.pts[k];
+                                    const ptB = d.pts[k+1];
+                                    
+                                    // Screen positions of segment points
+                                    // Note: Using the same offset logic as 'draw' function
+                                    const offA = -ptA.v_disp * s * zoom;
+                                    const offB = -ptB.v_disp * s * zoom;
+                                    
+                                    const ax = p1.x + ptA.t * dx + nx * offA;
+                                    const ay = p1.y + ptA.t * dy + ny * offA;
+                                    const bx = p1.x + ptB.t * dx + nx * offB;
+                                    const by = p1.y + ptB.t * dy + ny * offB;
+                                    
+                                    // Distance to this short segment
+                                    const segDx = bx - ax;
+                                    const segDy = by - ay;
+                                    const segLenSq = segDx*segDx + segDy*segDy;
+                                    
+                                    if(segLenSq > 0) {
+                                        const segT = Math.max(0, Math.min(1, ((sx - ax)*segDx + (sy - ay)*segDy) / segLenSq));
+                                        const segX = ax + segT * segDx;
+                                        const segY = ay + segT * segDy;
+                                        const segDist = Math.sqrt((sx - segX)**2 + (sy - segY)**2);
+                                        
+                                        if (segDist < dist) dist = segDist; // Use closest distance found
+                                    }
+                                }
+                            }
+                        }
+
+                        if (dist < minElDist) {
+                            minElDist = dist;
+                            clickedElementId = el.id;
+                        }
                     });
                 }
 
-                onCanvasInteract({ type: 'click', worldPos, snappedPos, nodeId: clickedNodeId, elementId: clickedElementId });
+                // 3. Hit Test Loads (Arrows/Text)
+                let clickedLoadIndex = null;
+                if (clickedNodeId === null) {
+                    // Reuse same logic from before, but prioritized after nodes
+                    loads.forEach((l, index) => {
+                        let hit = false;
+                        if (l.nodeId !== undefined) {
+                            const n = nodes[l.nodeId];
+                            if(n) {
+                                const p = toScreen(n.x, n.y);
+                                if (Math.sqrt((sx - p.x)**2 + (sy - p.y)**2) < 25) hit = true;
+                                // Check arrow tips
+                                if (l.fx && Math.abs(sx - (p.x + l.fx*2)) < 15 && Math.abs(sy - p.y) < 15) hit = true;
+                                if (l.fy && Math.abs(sx - p.x) < 15 && Math.abs(sy - (p.y - l.fy*2)) < 15) hit = true;
+                            }
+                        } else if (l.elementId !== undefined) {
+                            // Simplified: Check if click is near the beam the load is on
+                            const el = elements.find(e => e.id === l.elementId);
+                            if(el) {
+                                const n1 = nodes[el.n1], n2 = nodes[el.n2];
+                                const p1 = toScreen(n1.x, n1.y), p2 = toScreen(n2.x, n2.y);
+                                const dx = p2.x - p1.x, dy = p2.y - p1.y;
+                                const L2 = dx*dx + dy*dy;
+                                if(L2 > 0) {
+                                    const t = Math.max(0, Math.min(1, ((sx-p1.x)*dx + (sy-p1.y)*dy) / L2));
+                                    const px = p1.x + t*dx, py = p1.y + t*dy;
+                                    const dist = Math.sqrt((sx-px)**2 + (sy-py)**2);
+                                    
+                                    // If we clicked near the beam (but not ON the beam, to avoid conflict)
+                                    // Or if we clicked near a specific point load location
+                                    if (dist > 10 && dist < 40) hit = true; 
+                                    
+                                    // Point Span specific check
+                                    if (l.type === 'point_span') {
+                                        const L_phys = Math.sqrt((n2.x - n1.x)**2 + (n2.y - n1.y)**2);
+                                        const loadT = (l.dist || L_phys/2) / L_phys;
+                                        if (Math.abs(t - loadT) < 0.1 && dist < 40) hit = true;
+                                    }
+                                }
+                            }
+                        }
+                        if (hit) clickedLoadIndex = index;
+                    });
+                }
+
+                onCanvasInteract({ type: 'click', worldPos, snappedPos, nodeId: clickedNodeId, elementId: clickedElementId, loadIndex: clickedLoadIndex });
             };
 
             useEffect(() => {
@@ -1407,47 +1604,51 @@
                         <div className="absolute z-30 bg-slate-800/95 border border-slate-500 p-2 rounded shadow-xl text-[10px] pointer-events-none whitespace-nowrap"
                              style={{ left: hoverData.x + 15, top: hoverData.y + 15 }}>
                             <div className="font-bold text-slate-300 border-b border-slate-600 mb-1 pb-1">
-                                Element {hoverData.elId} @ {hoverData.x_loc.toFixed(2)}m
+                                {t('el_det')} {hoverData.elId} @ {hoverData.x_loc.toFixed(2)}m
                             </div>
                             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                                <span className="text-red-400">Moment:</span>
+                                <span className="text-red-400">{t('moment')}:</span>
                                 <span className="font-mono text-right">{hoverData.mx.toFixed(2)} kNm</span>
                                 
-                                <span className="text-blue-400">Shear:</span>
+                                <span className="text-blue-400">{t('shear')}:</span>
                                 <span className="font-mono text-right">{hoverData.vx.toFixed(2)} kN</span>
 
-                                <span className="text-pink-400">Axial:</span>
+                                <span className="text-pink-400">{t('axial')}:</span>
                                 <span className="font-mono text-right">{hoverData.ax.toFixed(2)} kN</span>
                                 
-                                <span className="text-emerald-400">Defl:</span>
+                                <span className="text-emerald-400">{t('defl')}:</span>
                                 <span className="font-mono text-right">{(hoverData.disp * 1000).toFixed(2)} mm</span>
                             </div>
-                            <div className="mt-1 pt-1 border-t border-slate-600 text-slate-400">
-                                <div className="flex justify-between gap-2"><span>Max M:</span> <span className="text-slate-200">{hoverData.maxM.toFixed(2)}</span></div>
-                                <div className="flex justify-between gap-2"><span>Min M:</span> <span className="text-slate-200">{hoverData.minM.toFixed(2)}</span></div>
+                            <div className="mt-1 pt-1 border-t border-slate-600 text-slate-400 grid grid-cols-2 gap-x-4">
+                                <span className="text-red-300">Max M: {hoverData.maxM.toFixed(1)}</span>
+                                <span className="text-red-300">Min M: {hoverData.minM.toFixed(1)}</span>
+                                <span className="text-blue-300">Max V: {hoverData.maxV.toFixed(1)}</span>
+                                <span className="text-blue-300">Min V: {hoverData.minV.toFixed(1)}</span>
+                                <span className="text-pink-300">Max A: {hoverData.maxA.toFixed(1)}</span>
+                                <span className="text-pink-300">Min A: {hoverData.minA.toFixed(1)}</span>
                             </div>
                         </div>
                     )}
-                    <div className="absolute top-4 left-4 z-20 bg-slate-800/80 p-2 rounded text-xs text-slate-300 pointer-events-none">
-                        <p>Zoom: Scroll | Pan: Drag</p>
-                        <p>Mode: {tool.toUpperCase()}</p>
-                        <p>{tool === 'node' ? 'Click to add Node' : tool === 'element' ? 'Click start then end node' : tool === 'support' ? 'Click node to add support' : tool === 'load' ? 'Click node/element to add load' : 'Select Nodes/Elements'}</p>
+                    <div className="absolute bottom-4 left-4 z-20 bg-slate-800/80 p-2 rounded text-[10px] text-slate-300 pointer-events-none hidden sm:block">
+                        <p>{t('instr_zoom')}</p>
+                        <p>{t('mode')}: {tool.toUpperCase()}</p>
+                        <p>{tool === 'node' ? t('click_add') : tool === 'element' ? t('click_start') : tool === 'support' ? t('click_node') : tool === 'load' ? t('click_node_inst') : t('select_items')}</p>
                     </div>
                     {/* ADDED: Results Legend */}
                     {results && plotData && (
                         <div className="absolute bottom-4 right-4 z-20 bg-slate-800/90 p-3 rounded text-xs text-slate-200 shadow-lg pointer-events-none border border-slate-600">
-                            <h4 className="font-bold mb-1 border-b border-slate-600 pb-1">Global Extremes</h4>
+                            <h4 className="font-bold mb-1 border-b border-slate-600 pb-1">{t('global_ext')}</h4>
                             {viewSettings.showBMD && (
-                                <div className="text-red-400">Max Moment: {plotData.stats.maxM.toFixed(2)} kNm</div>
+                                <div className="text-red-400">{t('max_m')}: {plotData.stats.maxM.toFixed(2)} kNm</div>
                             )}
                             {viewSettings.showSFD && (
-                                <div className="text-blue-400">Max Shear: {plotData.stats.maxV.toFixed(2)} kN</div>
+                                <div className="text-blue-400">{t('max_v')}: {plotData.stats.maxV.toFixed(2)} kN</div>
                             )}
                             {viewSettings.showAFD && (
-                                <div className="text-pink-400">Max Axial: {plotData.stats.maxA.toFixed(2)} kN</div>
+                                <div className="text-pink-400">{t('max_a')}: {plotData.stats.maxA.toFixed(2)} kN</div>
                             )}
                             {viewSettings.showDeformed && (
-                                <div className="text-emerald-400">Max Disp: {plotData.stats.maxD.toExponential(2)} m</div>
+                                <div className="text-emerald-400">{t('max_d')}: {plotData.stats.maxD.toExponential(2)} m</div>
                             )}
                         </div>
                     )}
@@ -1458,7 +1659,13 @@
         // TIER 2.5: UI COMPONENTS (MODALS)
         // ==========================================
 
-        const LoadModal = ({ loadConfig, onConfirm, onCancel }) => {
+        const LoadModal = ({ loadConfig, onConfirm, onCancel, isDarkMode, t }) => { // <--- ADD t
+            const inputClass = isDarkMode 
+                ? "bg-slate-700 border-slate-600 text-white w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border" 
+                : "bg-slate-50 border-slate-300 text-slate-900 w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border";
+            
+            const panelClass = isDarkMode ? "bg-slate-800 border-slate-600 text-white" : "bg-white border-slate-200 text-slate-900";
+
             // Local state for the inputs
             const [data, setData] = useState({ ...loadConfig });
 
@@ -1468,17 +1675,17 @@
             return (
                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                     <div className="bg-slate-800 border border-slate-600 p-4 rounded shadow-2xl w-80">
-                        <h3 className="text-sm font-bold text-white mb-3 border-b border-slate-600 pb-2">
-                            Configure {data.type === 'dist' ? 'Distributed Load' : data.type === 'point_span' ? 'Point Load on Beam' : 'Nodal Load'}
+                        <h3 className="text-sm font-bold mb-3 border-b border-gray-500 pb-2">
+                            {t('conf_load')}
                         </h3>
                         
                         <div className="space-y-3 mb-4">
                             {/* Target Info */}
-                            <div className="text-xs text-slate-400">
-                                Target: <span className="text-blue-400 font-mono">
-                                    {data.elementId !== undefined ? `Beam ${data.elementId}` : `Node ${data.nodeId}`}
-                                </span>
-                            </div>
+                            <div className="text-xs text-gray-400">
+                             {t('target')}: <span className="text-blue-400 font-mono">
+                                {data.elementId !== undefined ? `${t('beam')} ${data.elementId}` : `${t('node')} ${data.nodeId}`}
+                            </span>
+                        </div>
 
                             {/* NODAL POINT */}
                             {data.type === 'point' && (
@@ -1495,14 +1702,14 @@
                             {data.type === 'point_span' && (
                                 <>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <div><label className="text-[10px] text-slate-500">Mag (kN)</label><input type="number" className="input-dark" value={data.mag} onChange={e=>update('mag', e.target.value)} /></div>
-                                        <div><label className="text-[10px] text-slate-500">Angle (°)</label><input type="number" className="input-dark" value={data.angle} onChange={e=>update('angle', e.target.value)} /></div>
+                                        <label className="text-[10px] text-gray-500">{t('moment')} (kNm)</label>
+                                        <label className="text-[10px] text-gray-500">{t('mag')} (kN)</label>
                                     </div>
                                     {/* ADDED: Ref Toggle */}
                                     <div className="flex gap-2 text-[10px] mb-1">
                                         <label className="text-slate-500 pt-1">Ref:</label>
-                                        <button onClick={()=>update('angleRef', 'global')} className={`px-2 py-0.5 rounded ${data.angleRef==='global'?'bg-blue-600':'bg-slate-700'}`}>Global</button>
-                                        <button onClick={()=>update('angleRef', 'local')} className={`px-2 py-0.5 rounded ${data.angleRef==='local'?'bg-blue-600':'bg-slate-700'}`}>Local</button>
+                                        <button onClick={onCancel} className="flex-1 bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded">{t('cancel')}</button>
+                                        <button onClick={() => onConfirm(data)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-xs py-2 rounded font-bold">{t('apply')}</button>
                                     </div>
                                     <div><label className="text-[10px] text-slate-500">Distance from Start (m)</label><input type="number" className="input-dark" value={data.dist} onChange={e=>update('dist', e.target.value)} /></div>
                                 </>
@@ -1549,42 +1756,408 @@
         // ==========================================
         // TIER 2: CONTROLLER (REACT APP)
         // ==========================================
+        // [MODIFY] Robust Icon Component to fix missing icons
+            
+        // [ADD] Translations Dictionary
+        const TRANSLATIONS = {
+            en: {
+                sett_el: "Element Settings",
+                sett_supp: "Support Settings",
+                sett_load: "Load Settings",
+                title: "WebFEA - 2D Frame Analysis",
+                load_portal: "Load Portal Frame Demo",
+                load_truss: "Load Truss Bridge Demo",
+                save: "Save",
+                load: "Load",
+                clear: "Clear All",
+                nodes: "Nodes",
+                elements: "Elements",
+                node_list: "Node List",
+                member_list: "Member List",
+                select_action: "Selection Actions",
+                node_sel: "Node Selection",
+                beam_sel: "Beam Selection",
+                del_node_full: "Delete Node & Support",
+                del_supp_only: "Remove Support Only",
+                del_sel: "Delete Selection",
+                conv_truss: "Convert to Truss Element",
+                conv_rigid: "Convert to Normal Frame",
+                attached_loads: "Attached Loads",
+                clear_loads: "Clear Loads",
+                no_supp: "No support attached",
+                no_loads: "No loads",
+                tool_select: "Select",
+                tool_node: "Add Node",
+                tool_beam: "Add Beam",
+                tool_supp: "Add Support",
+                tool_load: "Add Load",
+                tool_opt: "Display Options",
+                toggle_theme: "Toggle Theme",
+                toggle_lang: "Switch Language",
+                sett: "Settings",
+                el_type: "Element Type",
+                normal: "Normal (Rigid)",
+                truss: "Truss (Pin)",
+                supp_type: "Support Type",
+                fixed: "Fixed",
+                pin: "Pin",
+                roller: "Roller",
+                angle: "Angle",
+                click_node: "Click node to apply",
+                assign_supp: "Assign Support",
+                load_type: "Load Type",
+                pt_node: "Nodal Point Load",
+                pt_beam: "Point on Beam",
+                dist_load: "Distributed Load",
+                supp_sett: "Support Settlement",
+                click_beam_inst: "Click a BEAM on canvas",
+                click_node_inst: "Click a NODE on canvas",
+                loads_active: "Loads active",
+                res_view: "Results View",
+                def_shape: "Deformed Shape",
+                sfd: "Shear Force (SFD)",
+                bmd: "Bending Moment (BMD)",
+                afd: "Axial Force (AFD)",
+                show_react: "Show Reactions",
+                def_scale: "Deformation Scale",
+                dia_scale: "Diagram Scale",
+                text_size: "Text Size",
+                global_ext: "Global Extremes",
+                max_m: "Max Moment",
+                max_v: "Max Shear",
+                max_a: "Max Axial",
+                max_d: "Max Disp",
+                el_det: "Element",
+                moment: "Moment",
+                shear: "Shear",
+                axial: "Axial",
+                defl: "Defl",
+                min: "Min",
+                max: "Max",
+                conf_load: "Configure Load",
+                target: "Target",
+                beam: "Beam",
+                node: "Node",
+                mag: "Mag",
+                dist_start: "Dist Start",
+                dist_end: "Dist End",
+                cancel: "Cancel",
+                apply: "Apply Load",
+                instr_zoom: "Zoom: Scroll | Pan: Drag",
+                mode: "Mode",
+                click_add: "Click to add",
+                click_start: "Click start then end",
+                select_items: "Select Nodes/Elements",
+                undo: "Undo",
+                redo: "Redo",
+                geo: "Geo",
+                prop: "Prop",
+                res: "Res",
+                new_prop: "New Beam Properties",
+                elastic: "Elastic Modulus (GPa)",
+                inertia: "Moment of Inertia (m4)",
+                area: "Area (m2)",
+                dist: "Distance",
+                ref: "Ref",
+                global: "Global",
+                local: "Local",
+                // [ADD] New keys below
+                auto_solved: "Auto-Solved",
+                el_col: "El",
+                m_start: "M_start",
+                m_end: "M_end",
+                v_start: "V_start",
+                tab_geo: "Geometry",
+                tab_prop: "Properties",
+                tab_loads: "Loads",
+                tab_res: "Results",
+                
+                // Loads Panel Specifics
+                select_load_type_lbl: "1. Select Load Type",
+                node_label: "Node:",
+                angle_deg: "Angle °",
+                click_to_apply: "Click nodes on canvas to apply.",
+                loads_count: "Loads active",
+                lbl_dx: "DX (m)",
+                lbl_dy: "DY (m)",
+                
+                // Ensure Toolbar Tooltips match
+                undo_tip: "Undo (Ctrl+Z)",
+                redo_tip: "Redo (Ctrl+Y)",
+                toggle_theme_tip: "Toggle Theme",
+                toggle_lang_tip: "Switch Language"
+            },
+            zh: {
+                sett_el: "单元设置",
+                sett_supp: "支座设置",
+                sett_load: "荷载设置",
+                title: "WebFEA - 二维框架分析",
+                load_portal: "加载门式刚架示例",
+                load_truss: "加载桁架桥示例",
+                save: "保存项目",
+                load: "加载项目",
+                clear: "清空所有",
+                nodes: "节点",
+                elements: "单元",
+                node_list: "节点列表",
+                member_list: "单元列表",
+                select_action: "选择操作",
+                node_sel: "节点选择",
+                beam_sel: "单元选择",
+                del_node_full: "删除节点和支座",
+                del_supp_only: "仅删除支座",
+                del_sel: "删除选中项",
+                conv_truss: "转换为桁架单元",
+                conv_rigid: "转换为刚接框架",
+                attached_loads: "附加荷载",
+                clear_loads: "清除荷载",
+                no_supp: "无支座",
+                no_loads: "无荷载",
+                tool_select: "选择",
+                tool_node: "添加节点",
+                tool_beam: "添加单元",
+                tool_supp: "添加支座",
+                tool_load: "添加荷载",
+                tool_opt: "显示选项",
+                toggle_theme: "切换主题",
+                toggle_lang: "切换语言",
+                sett: "设置",
+                el_type: "单元类型",
+                normal: "普通刚接",
+                truss: "桁架(铰接)",
+                supp_type: "支座类型",
+                fixed: "固定端",
+                pin: "铰支座",
+                roller: "滚动支座",
+                angle: "角度",
+                click_node: "点击节点应用",
+                assign_supp: "应用支座",
+                load_type: "荷载类型",
+                pt_node: "节点集中荷载",
+                pt_beam: "梁上集中荷载",
+                dist_load: "均布/梯形荷载",
+                supp_sett: "支座沉降",
+                click_beam_inst: "请点击画布上的梁",
+                click_node_inst: "请点击画布上的节点",
+                loads_active: "个荷载",
+                res_view: "结果视图",
+                def_shape: "变形图",
+                sfd: "剪力图 (SFD)",
+                bmd: "弯矩图 (BMD)",
+                afd: "轴力图 (AFD)",
+                show_react: "显示反力",
+                def_scale: "变形比例",
+                dia_scale: "图表比例",
+                text_size: "文字大小",
+                global_ext: "全局极值",
+                max_m: "最大弯矩",
+                max_v: "最大剪力",
+                max_a: "最大轴力",
+                max_d: "最大位移",
+                el_det: "单元",
+                moment: "弯矩",
+                shear: "剪力",
+                axial: "轴力",
+                defl: "挠度",
+                min: "最小",
+                max: "最大",
+                conf_load: "配置荷载",
+                target: "目标",
+                beam: "梁",
+                node: "节点",
+                mag: "大小",
+                dist_start: "起始距离",
+                dist_end: "结束距离",
+                cancel: "取消",
+                apply: "应用荷载",
+                instr_zoom: "缩放: 滚轮 | 平移: 拖拽",
+                mode: "模式",
+                click_add: "点击添加",
+                click_start: "点击起点和终点",
+                select_items: "选择节点/单元",
+                undo: "撤销",
+                redo: "重做",
+                geo: "几何",
+                prop: "属性",
+                res: "结果",
+                new_prop: "新梁属性",
+                elastic: "弹性模量 (GPa)",
+                inertia: "惯性矩 (m4)",
+                area: "面积 (m2)",
+                dist: "距离",
+                ref: "参考系",
+                global: "全局",
+                local: "局部",
+                // [ADD] New keys below
+                auto_solved: "自动求解完成",
+                el_col: "单元",
+                m_start: "M_起",
+                m_end: "M_终",
+                v_start: "V_起",
+                tab_geo: "几何",
+                tab_prop: "属性",
+                tab_loads: "荷载",
+                tab_res: "结果",
+                
+                // Loads Panel Specifics
+                select_load_type_lbl: "1. 选择荷载类型",
+                node_label: "节点:",
+                angle_deg: "角度 °",
+                click_to_apply: "在画布上点击节点以应用。",
+                loads_count: "个有效荷载",
+                lbl_dx: "X方向位移 (m)",
+                lbl_dy: "Y方向位移 (m)",
 
+                // Ensure Toolbar Tooltips match
+                undo_tip: "撤销 (Ctrl+Z)",
+                redo_tip: "重做 (Ctrl+Y)",
+                toggle_theme_tip: "切换主题",
+                toggle_lang_tip: "切换语言"
+            }
+        };
+        const Icon = React.memo(({ name, className }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            
+            useEffect(() => {
+                // Ensure lucide is loaded from the CDN
+                const lucide = window.lucide;
+                if (!lucide) {
+                    console.warn("Lucide icons not loaded yet");
+                    return;
+                }
+
+                const pascalName = name
+                    .split('-')
+                    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+                    .join('');
+                
+                const iconNode = (lucide.icons && lucide.icons[pascalName]) || lucide[pascalName];
+
+                if (iconNode) {
+                    // Fix: Use createIcons/createElement API for newer Lucide versions
+                    try {
+                        const svgElement = lucide.createElement(iconNode);
+                        
+                        // Apply attributes manually to ensure compatibility across versions
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', '24');
+                        svgElement.setAttribute('height', '24');
+                        svgElement.setAttribute('stroke-width', '2');
+                        
+                        setSvgHtml(svgElement.outerHTML);
+                    } catch (e) {
+                        console.error(`Failed to render icon: ${name}`, e);
+                    }
+                }
+            }, [name, className]);
+
+            if (!svgHtml) return <span className={`inline-block ${className}`} />;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className={`inline-flex items-center justify-center shrink-0 ${className}`} />;
+        });
         const App = () => {
+            const [isDarkMode, setIsDarkMode] = useState(true);
+            const [lang, setLang] = useState('en');
+            const t = (key) => TRANSLATIONS[lang][key] || key;
+            // Dynamic Classes for UI Elements
+            const uiClasses = {
+                panel: isDarkMode ? "bg-slate-800/95 border-slate-600 text-slate-100" : "bg-white/95 border-slate-200 text-slate-800",
+                input: isDarkMode ? "bg-slate-700 border-slate-600 text-white" : "bg-slate-50 border-slate-300 text-slate-900",
+                buttonActive: "bg-blue-600 text-white shadow-lg",
+                buttonInactive: isDarkMode ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-100",
+                textMuted: isDarkMode ? "text-slate-400" : "text-slate-500",
+                canvasWrap: isDarkMode ? "bg-slate-900 text-slate-100" : "bg-slate-50 text-slate-900"
+            };
             const [nodes, setNodes] = useState([]);
             const [elements, setElements] = useState([]);
             const [supports, setSupports] = useState([]);
             const [loads, setLoads] = useState([]);
+            // ... (keep other existing states like results, error, sidebarOpen, tool, etc.) ...
             const [results, setResults] = useState(null);
             const [error, setError] = useState(null);
-            
+            const [sidebarOpen, setSidebarOpen] = useState(false);
             const [tool, setTool] = useState('pointer'); 
             const [selectedNode, setSelectedNode] = useState(null);
             const [selectedElement, setSelectedElement] = useState(null);
-
-            // ADDED: showAFD: false, showReactions: true
+            const [selectedLoad, setSelectedLoad] = useState(null);
             const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, defScale: 100, diaScale: 0.5 });
             const [activeTab, setActiveTab] = useState('geo');
             const [textSize, setTextSize] = useState(11);
             
-            // ADDED: type property (rigid/truss)
             const [elemProp, setElemProp] = useState({ E: 200, I: 0.0001, A: 0.01, type: 'rigid' });
-            // ADDED: Angle default 0
             const [suppInput, setSuppInput] = useState({ nodeId: 0, type: 'fixed', angle: 0 });
-            
-            // Input state only tracks the TYPE now. The actual values are in the modal.
             const [loadType, setLoadType] = useState('point'); 
-            
-            // If this is not null, the Modal is open
             const [pendingLoad, setPendingLoad] = useState(null);
+            
+            // [ADD] State for Display Options Toggle
+            const [showDisplayMenu, setShowDisplayMenu] = useState(false);
 
-            const handleCanvasInteract = ({ type, worldPos, snappedPos, nodeId, elementId }) => {
+            // [ADD] History State
+            const [history, setHistory] = useState({ past: [], future: [] });
+
+            // [ADD] History Functions
+            const addToHistory = () => {
+                setHistory(curr => ({
+                    past: [...curr.past, { nodes, elements, supports, loads }],
+                    future: []
+                }));
+            };
+
+            const undo = () => {
+                if (history.past.length === 0) return;
+                const previous = history.past[history.past.length - 1];
+                const newPast = history.past.slice(0, -1);
+                
+                setHistory({
+                    past: newPast,
+                    future: [{ nodes, elements, supports, loads }, ...history.future]
+                });
+
+                setNodes(previous.nodes);
+                setElements(previous.elements);
+                setSupports(previous.supports);
+                setLoads(previous.loads);
+                setResults(null);
+            };
+
+            const redo = () => {
+                if (history.future.length === 0) return;
+                const next = history.future[0];
+                const newFuture = history.future.slice(1);
+
+                setHistory({
+                    past: [...history.past, { nodes, elements, supports, loads }],
+                    future: newFuture
+                });
+
+                setNodes(next.nodes);
+                setElements(next.elements);
+                setSupports(next.supports);
+                setLoads(next.loads);
+                setResults(null);
+            };
+
+            // [ADD] Keyboard Shortcuts for Undo/Redo
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                        if (e.shiftKey) redo();
+                        else undo();
+                    }
+                    if ((e.ctrlKey || e.metaKey) && (e.key === 'y')) {
+                        redo();
+                    }
+                };
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [history, nodes, elements, supports, loads]);
+
+            const handleCanvasInteract = ({ type, worldPos, snappedPos, nodeId, elementId, loadIndex }) => {
                 if (type !== 'click') return;
 
                 if (tool === 'node') {
-                    // USE SNAPPED POS
                     const { x, y } = snappedPos;
                     if (!nodes.find(n => Math.abs(n.x - x) < 0.001 && Math.abs(n.y - y) < 0.001)) {
+                        addToHistory(); // <--- ADD THIS
                         setNodes(prev => [...prev, { x, y }]);
                     }
                 }
@@ -1592,7 +2165,7 @@
                     if (nodeId !== null) {
                         if (selectedNode === null) setSelectedNode(nodeId);
                         else if (selectedNode !== nodeId) {
-                            // ADDED: Pass elemProp.type
+                            addToHistory(); // <--- ADD THIS
                             setElements(prev => [...prev, { 
                                 id: prev.length + 1, n1: selectedNode, n2: nodeId, 
                                 E: elemProp.E * 1e6, I: elemProp.I, A: elemProp.A,
@@ -1632,13 +2205,27 @@
                     // Pointer Mode
                     setSelectedNode(nodeId);
                     setSelectedElement(elementId);
+                    // [ADD] Set selected load. If a load is clicked, prioritize it over element/node selection
+                    if (loadIndex !== null) {
+                        setSelectedLoad(loadIndex);
+                        setSelectedNode(null); 
+                        setSelectedElement(null);
+                    } else {
+                        // If we clicked a node/element, selectedLoad is null (handled by logic below)
+                        // But if we clicked NOTHING (empty space), we need to clear everything.
+                        setSelectedLoad(null); 
+                    }
                     // Auto-fill inputs based on selection
                     if (nodeId !== null) {
                         setSuppInput(p => ({...p, nodeId: nodeId}));
                     }
-                    if (elementId !== null && loadInput.type === 'dist') {
-                        setLoadInput(p => ({...p, targetId: elementId}));
-                    }
+                }
+            };
+            // [ADD] Helper to delete selected load directly
+            const deleteSelectedLoad = () => {
+                if (selectedLoad !== null) {
+                    deleteLoad(selectedLoad);
+                    setSelectedLoad(null);
                 }
             };
 
@@ -1648,7 +2235,6 @@
                     setResults(null);
                     return;
                 }
-                // Debounce could be added here for very large models, but usually fine for frames
                 try {
                     const solver = new FrameSolver(nodes, elements, supports, loads);
                     const res = solver.calculate();
@@ -1661,7 +2247,72 @@
                     setResults(null);
                 }
             }, [nodes, elements, supports, loads]); // Re-run when these change
+            // [ADD] Persistence & File Handling Logic
+            const fileInputRef = useRef(null);
+            const isInitialized = useRef(false);
 
+            // 1. Auto-Load from Local Storage on Mount
+            useEffect(() => {
+                const saved = localStorage.getItem('webfea_autosave');
+                if (saved) {
+                    try {
+                        const data = JSON.parse(saved);
+                        if (data.nodes) setNodes(data.nodes);
+                        if (data.elements) setElements(data.elements);
+                        if (data.supports) setSupports(data.supports);
+                        if (data.loads) setLoads(data.loads);
+                        if (data.viewSettings) setViewSettings(data.viewSettings);
+                    } catch (e) {
+                        console.error("Failed to restore autosave", e);
+                    }
+                }
+                isInitialized.current = true;
+            }, []);
+
+            // 2. Auto-Save to Local Storage on Change
+            useEffect(() => {
+                if (!isInitialized.current) return; // Prevent overwriting save with empty init state
+                const projectData = { nodes, elements, supports, loads, viewSettings };
+                localStorage.setItem('webfea_autosave', JSON.stringify(projectData));
+            }, [nodes, elements, supports, loads, viewSettings]);
+
+            // 3. File Operations
+            const saveProject = () => {
+                const projectData = { nodes, elements, supports, loads, viewSettings, version: '1.0' };
+                const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `webfea_project_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const triggerLoad = () => fileInputRef.current.click();
+
+            const handleFileLoad = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        // Load data safely
+                        setNodes(data.nodes || []);
+                        setElements(data.elements || []);
+                        setSupports(data.supports || []);
+                        setLoads(data.loads || []);
+                        if (data.viewSettings) setViewSettings(data.viewSettings);
+                        
+                        setResults(null); // Clear old results
+                        addToHistory(); // Create undo point
+                    } catch (err) {
+                        alert("Invalid project file format");
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = null; // Reset input
+            };
             const loadDemo = () => {
                 setNodes([{x:0, y:0}, {x:0, y:4}, {x:5, y:4}, {x:5, y:0}]);
                 setElements([
@@ -1681,7 +2332,45 @@
                 
                 setResults(null);
             };
+            const loadTrussDemo = () => {
+                // Simple 4-bay Warren Truss
+                const w = 4, h = 3;
+                setNodes([
+                    {x:0, y:0}, {x:w, y:0}, {x:2*w, y:0}, {x:3*w, y:0}, {x:4*w, y:0}, // Bottom Chord: 0,1,2,3,4
+                    {x:w/2, y:h}, {x:1.5*w, y:h}, {x:2.5*w, y:h}, {x:3.5*w, y:h}      // Top Chord: 5,6,7,8
+                ]);
+                
+                const defaults = { E:200e6, I:0.0001, A:0.005, type:'truss' };
+                
+                setElements([
+                    // Bottom Chord
+                    {id:1, n1:0, n2:1, ...defaults}, {id:2, n1:1, n2:2, ...defaults}, 
+                    {id:3, n1:2, n2:3, ...defaults}, {id:4, n1:3, n2:4, ...defaults},
+                    // Top Chord
+                    {id:5, n1:5, n2:6, ...defaults}, {id:6, n1:6, n2:7, ...defaults}, 
+                    {id:7, n1:7, n2:8, ...defaults},
+                    // Diagonals (Zig-Zag)
+                    {id:8, n1:0, n2:5, ...defaults}, {id:9, n1:5, n2:1, ...defaults},
+                    {id:10, n1:1, n2:6, ...defaults}, {id:11, n1:6, n2:2, ...defaults},
+                    {id:12, n1:2, n2:7, ...defaults}, {id:13, n1:7, n2:3, ...defaults},
+                    {id:14, n1:3, n2:8, ...defaults}, {id:15, n1:8, n2:4, ...defaults}
+                ]);
+
+                setSupports([
+                    {nodeId:0, rx:true, ry:true, rm:false, type:'pin'}, 
+                    {nodeId:4, rx:false, ry:true, rm:false, type:'roller'}
+                ]);
+
+                setLoads([
+                    {type:'point', nodeId:2, fx:0, fy:-50, m:0}, // Load at center bottom
+                    {type:'point', nodeId:6, fx:20, fy:0, m:0}   // Wind load top
+                ]);
+                
+                setResults(null);
+                setTool('pointer');
+            };
             const deleteNode = (index) => {
+                addToHistory();
                 // 1. Remove Node
                 const newNodes = nodes.filter((_, i) => i !== index);
                 
@@ -1714,12 +2403,30 @@
             };
 
             const deleteElement = (id) => {
+                addToHistory();
                 setElements(prev => prev.filter(e => e.id !== id));
                 setLoads(prev => prev.filter(l => l.elementId !== id)); // Remove attached dist loads
                 setResults(null);
                 setSelectedElement(null);
             };
+            // [ADD] Function to delete a single specific load
+            const deleteLoad = (loadIndex) => {
+                addToHistory();
+                setLoads(prev => prev.filter((_, i) => i !== loadIndex));
+                setResults(null); // Re-solve after deleting load
+            };
+
+            const deleteSelection = () => {
+                if (selectedLoad !== null) {
+                    deleteSelectedLoad();
+                } else if (selectedElement !== null) {
+                    deleteElement(selectedElement);
+                } else if (selectedNode !== null) {
+                    deleteNode(selectedNode);
+                }
+            };
             const addSupport = (targetNodeId = null) => {
+                addToHistory();
                 const nid = targetNodeId !== null ? targetNodeId : parseInt(suppInput.nodeId);
                 if(isNaN(nid) || nid >= nodes.length) return;
                 
@@ -1743,123 +2450,420 @@
 
             // Called by the Modal when user clicks "Apply"
             const confirmLoad = (loadData) => {
+                addToHistory();
                 setLoads(prev => [...prev, loadData]);
                 setPendingLoad(null); // Close modal
             };
 
-            useEffect(() => { if(window.lucide) window.lucide.createIcons(); });
-
             return (
-                <div className="flex h-screen w-screen text-slate-100 font-sans">
-                    {/* Sidebar */}
-                    <div className="w-80 bg-slate-900 border-r border-slate-700 flex flex-col z-30 shadow-xl">
-                        <div className="p-4 border-b border-slate-700">
-                            <h1 className="text-xl font-bold flex items-center gap-2 text-blue-400"><i data-lucide="activity"></i> WebFEA</h1>
+                <div className="relative h-screen w-screen bg-slate-900 text-slate-100 font-sans overflow-hidden">
+                    
+                    {/* [ADD] 1. Menu Button (3 Dots) - Top Left */}
+                    <div className="absolute top-4 left-4 z-50">
+                        <button 
+                            onClick={() => setSidebarOpen(!sidebarOpen)} 
+                            className="bg-slate-800/90 backdrop-blur border border-slate-600 p-3 rounded-full shadow-xl text-blue-400 hover:bg-slate-700 transition-colors"
+                        >
+                            <Icon name="more-vertical" className="w-6 h-6" />
+                        </button>
+                    </div>
+
+                    {/* [ADD] 2. Floating Tools - Top Right (Mobile Friendly) */}
+                    <div className="absolute top-4 right-4 z-50 flex items-start gap-3">
+                        
+                        {/* DYNAMIC DELETE OPTIONS */}
+                        <div className="flex flex-col gap-2">
+                            {/* CASE A: Node Selected AND has Support -> Show 2 Choices */}
+                            {selectedNode !== null && supports.some(s => s.nodeId === selectedNode) ? (
+                                <>
+                                    <button 
+                                        onClick={() => deleteNode(selectedNode)}
+                                        className="bg-red-600 hover:bg-red-500 text-white p-3 rounded-xl shadow-xl border border-red-500 transition-all flex items-center group relative"
+                                        title={t('del_node_full')} // [MODIFY]
+                                    >
+                                        <Icon name="trash-2" className="w-5 h-5" />
+                                        <span className="absolute right-full mr-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                                            {t('del_node_full')} {/* [MODIFY] */}
+                                        </span>
+                                    </button>
+                                    
+                                    <button 
+                                        onClick={() => { addToHistory(); setSupports(s => s.filter(x => x.nodeId !== selectedNode)); }}
+                                        className="bg-orange-600 hover:bg-orange-500 text-white p-3 rounded-xl shadow-xl border border-orange-500 transition-all flex items-center group relative"
+                                        title={t('del_supp_only')} // [MODIFY]
+                                    >
+                                        <Icon name="minus-circle" className="w-5 h-5" />
+                                        <span className="absolute right-full mr-2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                                            {t('del_supp_only')} {/* [MODIFY] */}
+                                        </span>
+                                    </button>
+                                </>
+                            ) : (
+                                /* CASE B: Standard Delete (Element, Load, or Node without support) */
+                                (selectedNode !== null || selectedElement !== null || selectedLoad !== null) && (
+                                    <button 
+                                        onClick={deleteSelection}
+                                        className="bg-red-600 hover:bg-red-500 text-white p-3 rounded-xl shadow-xl border border-red-500 transition-all"
+                                        title={t('del_sel')} // [MODIFY]
+                                    >
+                                        <Icon name="trash-2" className="w-5 h-5" />
+                                    </button>
+                                )
+                            )}
+                        </div>
+
+                        {/* Toolbar */}
+                        <div className="bg-slate-800/90 backdrop-blur border border-slate-600 p-2 rounded-2xl shadow-xl flex flex-col gap-2">
+                            {/* Theme & Language Toggles */}
+                            <div className="flex gap-2">
+                                <button onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')} className={`p-3 rounded-xl transition-all flex-1 font-bold text-xs ${uiClasses.buttonInactive}`} title={t('toggle_lang')}>
+                                    {lang === 'en' ? '中' : 'EN'}
+                                </button>
+                            </div>
+                            <div className="w-full h-px bg-slate-700/50 my-1"></div>
+                            {/* [ADD] Undo / Redo */}
+                            <div className="flex flex-col gap-1 border-b border-slate-700 pb-2 mb-1">
+                                <button onClick={undo} disabled={history.past.length === 0} className={`p-2 rounded-xl transition-all ${history.past.length === 0 ? 'text-slate-600 cursor-not-allowed' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title={t('undo_tip')}>
+                                    <Icon name="undo-2" className="w-5 h-5" />
+                                </button>
+                                <button onClick={redo} disabled={history.future.length === 0} className={`p-2 rounded-xl transition-all ${history.future.length === 0 ? 'text-slate-600 cursor-not-allowed' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title={t('redo_tip')}>
+                                    <Icon name="redo-2" className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            <button onClick={() => setTool('pointer')} className={`p-3 rounded-xl transition-all ${tool === 'pointer' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700'}`} title={t('tool_select')}>
+                                <Icon name="mouse-pointer-2" className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => setTool('node')} className={`p-3 rounded-xl transition-all ${tool === 'node' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700'}`} title={t('tool_node')}>
+                                <Icon name="circle" className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => setTool('element')} className={`p-3 rounded-xl transition-all ${tool === 'element' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700'}`} title={t('tool_beam')}>
+                                <Icon name="slash" className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => { setTool('support'); setActiveTab('load'); }} className={`p-3 rounded-xl transition-all ${tool === 'support' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700'}`} title={t('tool_supp')}>
+                                <Icon name="triangle" className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => { setTool('load'); setActiveTab('load'); }} className={`p-3 rounded-xl transition-all ${tool === 'load' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700'}`} title={t('tool_load')}>
+                                <Icon name="arrow-down" className="w-5 h-5" />
+                            </button>
+                            {/* [ADD] Display Options Toggle Button */}
+                            <div className="w-full h-px bg-slate-700 my-1"></div> {/* Separator */}
+                            <button 
+                                onClick={() => setShowDisplayMenu(!showDisplayMenu)} 
+                                className={`p-3 rounded-xl transition-all ${showDisplayMenu ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700'}`} 
+                                title={t('tool_opt')}
+                            >
+                                <Icon name="eye" className="w-5 h-5" />
+                            </button>
+                        </div>
+                        
+                    </div>
+                    {/* 3. Tool Configuration Window (Floating) */}
+                    {(tool === 'element' || tool === 'support' || tool === 'load') && (
+                        <div className="absolute top-4 right-20 z-50 w-48 animate-in fade-in slide-in-from-right-5 duration-200">
+                            <div className={`${uiClasses.panel} backdrop-blur p-3 rounded-xl shadow-2xl flex flex-col gap-3`}>
+                                
+                                {/* HEADER */}
+                                <div className="flex justify-between items-center border-b border-slate-700 pb-2">
+                                    <span className="text-xs font-bold uppercase tracking-wider">
+                                        {tool === 'element' ? t('sett_el') : tool === 'support' ? t('sett_supp') : t('sett_load')}
+                                    </span>
+                                    <button onClick={() => setTool('pointer')} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
+                                </div>
+
+                                {/* ELEMENT OPTIONS */}
+                                {tool === 'element' && (
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[10px] text-slate-400">{t('el_type')}</label>
+                                        <div className="flex bg-slate-900 p-1 rounded-lg">
+                                            <button onClick={()=>setElemProp(p=>({...p, type:'rigid'}))} className={`flex-1 text-[10px] py-1.5 rounded-md transition-colors ${elemProp.type==='rigid'?'bg-blue-600 text-white shadow':'text-slate-500 hover:text-slate-300'}`}>{t('normal')}</button>
+                                            <button onClick={()=>setElemProp(p=>({...p, type:'truss'}))} className={`flex-1 text-[10px] py-1.5 rounded-md transition-colors ${elemProp.type==='truss'?'bg-blue-600 text-white shadow':'text-slate-500 hover:text-slate-300'}`}>{t('truss')}</button>
+                                        </div>
+                                        
+                                        {/* Convert Selection Button */}
+                                        {selectedElement !== null && (
+                                            <button onClick={() => { 
+                                                addToHistory();
+                                                setElements(prev => prev.map(e => e.id === selectedElement ? { ...e, type: e.type === 'truss' ? 'rigid' : 'truss' } : e));
+                                            }} className="bg-slate-600 hover:bg-slate-500 text-white text-[10px] py-2 rounded mt-1">
+                                                {elements.find(e => e.id === selectedElement)?.type === 'truss' ? t('conv_rigid') : t('conv_truss')}
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* SUPPORT OPTIONS */}
+                                {tool === 'support' && (
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[10px] text-slate-400">{t('supp_type')}</label>
+                                        <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-lg">
+                                            {['fixed', 'pin', 'roller'].map(type => (
+                                                <button key={type} onClick={()=>setSuppInput(p=>({...p, type}))} 
+                                                    className={`text-[10px] py-1.5 rounded-md capitalize transition-colors ${suppInput.type===type ? 'bg-emerald-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>
+                                                    {t(type)}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <label className="text-[10px] text-slate-500 w-12">{t('angle')}</label>
+                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={suppInput.angle} onChange={e=>setSuppInput({...suppInput, angle:e.target.value})} />
+                                        </div>
+                                        <div className="text-[10px] text-emerald-400 italic text-center mt-1">{t('click_node')}</div>
+                                    </div>
+                                )}
+
+                                {/* LOAD OPTIONS */}
+                                {tool === 'load' && (
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[10px] text-slate-400">{t('load_type')}</label>
+                                        <select className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={loadType} onChange={e=>setLoadType(e.target.value)}>
+                                            <option value="point">{t('pt_node')}</option>
+                                            <option value="point_span">{t('pt_beam')}</option>
+                                            <option value="dist">{t('dist_load')}</option>
+                                            <option value="settlement">{t('supp_sett')}</option>
+                                        </select>
+                                        <div className="text-[10px] text-yellow-400 italic text-center mt-1">
+                                            {(loadType === 'dist' || loadType === 'point_span') ? t('click_beam_inst') : t('click_node_inst')}
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500 border-t border-slate-700 pt-2 text-center">
+                                            {loads.length} {t('loads_count')}
+                                        </div>
+                                    </div>
+                                )}
+
+                            </div>
+                        </div>
+                    )}
+                    {/* 4. Display Options Panel (Floating) */}
+                    {showDisplayMenu && (
+                        <div className="absolute top-4 right-20 z-50 w-56 animate-in fade-in slide-in-from-right-5 duration-200">
+                            <div className={`${uiClasses.panel} backdrop-blur p-3 rounded-xl shadow-2xl flex flex-col gap-2`}>
+                                
+                                {/* HEADER */}
+                                <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-1">
+                                    <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                                        <Icon name="bar-chart-2" className="w-3 h-3" /> {t('res_view')}
+                                    </span>
+                                    <button onClick={() => setShowDisplayMenu(false)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
+                                </div>
+
+                                {/* CHECKBOXES */}
+                                <div className="space-y-2">
+                                    <label className="flex items-center gap-3 text-[11px] text-slate-300 cursor-pointer hover:text-white transition-colors">
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${viewSettings.showDeformed ? 'bg-emerald-600 border-emerald-500' : 'border-slate-500 bg-slate-900'}`}>
+                                            {viewSettings.showDeformed && <Icon name="check" className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <input type="checkbox" className="hidden" checked={viewSettings.showDeformed} onChange={e=>setViewSettings({...viewSettings, showDeformed:e.target.checked})} />
+                                        {t('def_shape')}
+                                    </label>
+
+                                    <label className="flex items-center gap-3 text-[11px] text-slate-300 cursor-pointer hover:text-white transition-colors">
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${viewSettings.showSFD ? 'bg-blue-600 border-blue-500' : 'border-slate-500 bg-slate-900'}`}>
+                                            {viewSettings.showSFD && <Icon name="check" className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <input type="checkbox" className="hidden" checked={viewSettings.showSFD} onChange={e=>setViewSettings({...viewSettings, showSFD:e.target.checked})} />
+                                        {t('sfd')}
+                                    </label>
+
+                                    <label className="flex items-center gap-3 text-[11px] text-slate-300 cursor-pointer hover:text-white transition-colors">
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${viewSettings.showBMD ? 'bg-red-600 border-red-500' : 'border-slate-500 bg-slate-900'}`}>
+                                            {viewSettings.showBMD && <Icon name="check" className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <input type="checkbox" className="hidden" checked={viewSettings.showBMD} onChange={e=>setViewSettings({...viewSettings, showBMD:e.target.checked})} />
+                                        {t('bmd')}
+                                    </label>
+
+                                    <label className="flex items-center gap-3 text-[11px] text-slate-300 cursor-pointer hover:text-white transition-colors">
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${viewSettings.showAFD ? 'bg-pink-600 border-pink-500' : 'border-slate-500 bg-slate-900'}`}>
+                                            {viewSettings.showAFD && <Icon name="check" className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <input type="checkbox" className="hidden" checked={viewSettings.showAFD} onChange={e=>setViewSettings({...viewSettings, showAFD:e.target.checked})} />
+                                        {t('afd')}
+                                    </label>
+
+                                    <div className="h-px bg-slate-700 my-1"></div>
+
+                                    <label className="flex items-center gap-3 text-[11px] text-slate-300 cursor-pointer hover:text-white transition-colors">
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${viewSettings.showReactions ? 'bg-green-600 border-green-500' : 'border-slate-500 bg-slate-900'}`}>
+                                            {viewSettings.showReactions && <Icon name="check" className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <input type="checkbox" className="hidden" checked={viewSettings.showReactions} onChange={e=>setViewSettings({...viewSettings, showReactions:e.target.checked})} />
+                                        {t('show_react')}
+                                    </label>
+                                </div>
+
+                                {/* SCALES */}
+                                <div className="mt-2 pt-2 border-t border-slate-700 space-y-3">
+                                    <div>
+                                        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                            <span>{t('def_scale')}</span>
+                                            <span>{viewSettings.defScale}x</span>
+                                        </div>
+                                        <input type="range" min="1" max="200" value={viewSettings.defScale} onChange={e=>setViewSettings({...viewSettings, defScale:Number(e.target.value)})} className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"/>
+                                    </div>
+                                    <div>
+                                        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                            <span>{t('dia_scale')}</span>
+                                            <span>{viewSettings.diaScale}x</span>
+                                        </div>
+                                        <input type="range" min="0.1" max="5" step="0.1" value={viewSettings.diaScale} onChange={e=>setViewSettings({...viewSettings, diaScale:Number(e.target.value)})} className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"/>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    )}
+                    {/* [MODIFY] 3. Sidebar - Collapsible with Slide Transition */}
+                    <div className={`absolute top-0 left-0 h-full w-80 bg-slate-900/95 backdrop-blur-md border-r border-slate-700 flex flex-col z-40 shadow-2xl transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                        
+                        {/* Header with Close Button */}
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+                            <h1 className="text-xl font-bold flex items-center gap-2 text-blue-400"><Icon name="activity" className="w-5 h-5" /> WebFEA</h1>
+                            <button onClick={() => setSidebarOpen(false)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-5 h-5" /></button>
                         </div>
 
                         <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                            {/* Tools */}
-                            <div className="bg-slate-800 p-2 rounded flex flex-col gap-2">
-                                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1">Tools</h3>
-                                <div className="flex gap-2 flex-wrap">
-                                    <button onClick={() => setTool('pointer')} className={`tool-btn ${tool === 'pointer' ? 'active' : 'inactive'}`} title="Select / Move"><i data-lucide="mouse-pointer" className="w-4 h-4"></i></button>
-                                    <button onClick={() => setTool('node')} className={`tool-btn ${tool === 'node' ? 'active' : 'inactive'}`} title="Add Node"><i data-lucide="circle-dot" className="w-4 h-4"></i></button>
-                                    <button onClick={() => setTool('element')} className={`tool-btn ${tool === 'element' ? 'active' : 'inactive'}`} title="Add Beam"><i data-lucide="minus" className="w-4 h-4"></i></button>
-                                    <button onClick={() => { setTool('support'); setActiveTab('load'); }} className={`tool-btn ${tool === 'support' ? 'active' : 'inactive'}`} title="Add Support"><i data-lucide="anchor" className="w-4 h-4"></i></button>
-                                    <button onClick={() => { setTool('load'); setActiveTab('load'); }} className={`tool-btn ${tool === 'load' ? 'active' : 'inactive'}`} title="Add Load"><i data-lucide="download" className="w-4 h-4"></i></button>
-                                </div>
+                            {/* Project File Management */}
+                            <div className="grid grid-cols-2 gap-3 pb-2 border-b border-slate-700/50">
+                                <button onClick={saveProject} className="bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded-lg text-slate-200 border border-slate-600 font-bold transition-colors flex items-center justify-center gap-2">
+                                    <Icon name="save" className="w-4 h-4" />
+                                {t('save')}</button>
+                                <button onClick={triggerLoad} className="bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded-lg text-slate-200 border border-slate-600 font-bold transition-colors flex items-center justify-center gap-2">
+                                    <Icon name="folder-open" className="w-4 h-4" />
+                                {t('load')}</button>
+                                {/* Hidden Input for File Loading */}
+                                <input type="file" ref={fileInputRef} onChange={handleFileLoad} className="hidden" accept=".json" />
                             </div>
-
-                            <button onClick={loadDemo} className="w-full bg-slate-800 hover:bg-slate-700 text-xs py-2 rounded text-slate-400 border border-slate-700">Load Portal Frame</button>
-
-                            {/* ADDED: Selection Actions Panel */}
+                            {/* [DELETE] Removed the 'Tools' div from here as it is now floating top-right */}
+                            
+                            <button onClick={loadDemo} className="w-full bg-slate-800 hover:bg-slate-700 text-xs py-3 rounded-lg text-slate-300 border border-slate-600 font-medium transition-colors">
+                            {t('load_portal')}</button>
+                            <button onClick={loadTrussDemo} className="w-full bg-slate-800 hover:bg-slate-700 text-xs py-3 rounded-lg text-slate-300 border border-slate-600 font-medium transition-colors">
+                            {t('load_truss')}</button>
+                            {/* ... (Keep existing Selection Actions Panel logic exactly as it was) ... */}
                             {(selectedNode !== null || selectedElement !== null) && (
                                 <div className="bg-slate-700 p-2 rounded border border-slate-600 shadow-sm">
-                                    <h3 className="text-[10px] font-bold text-white uppercase tracking-widest px-1 mb-2">Selection Actions</h3>
+                                    <h3 className="text-[10px] font-bold text-white uppercase tracking-widest px-1 mb-2">{t('select_action')}</h3>
                                     <div className="flex flex-col gap-2">
                                         {selectedNode !== null && (
-                                            <>
-                                                <div className="flex justify-between items-center text-xs text-blue-200 px-1">
-                                                    <span>Node {selectedNode}</span>
-                                                    <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white"><i data-lucide="x" className="w-3 h-3"></i></button>
-                                                </div>
-                                                <div className="grid grid-cols-1 gap-2">
-                                                    <button onClick={() => deleteNode(selectedNode)} className="bg-red-600 hover:bg-red-500 text-white text-xs py-1 rounded flex items-center justify-center gap-1"><i data-lucide="trash-2" className="w-3 h-3"></i> Delete Node</button>
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        {supports.some(s => s.nodeId === selectedNode) && (
-                                                            <button onClick={() => setSupports(s => s.filter(x => x.nodeId !== selectedNode))} className="bg-orange-700 hover:bg-orange-600 text-white text-[10px] py-1 rounded">Remove Support</button>
-                                                        )}
-                                                        {loads.some(l => l.nodeId === selectedNode) && (
-                                                            <button onClick={() => setLoads(l => l.filter(x => x.nodeId !== selectedNode))} className="bg-yellow-700 hover:bg-yellow-600 text-white text-[10px] py-1 rounded">Remove Loads</button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </>
-                                        )}
-                                        {selectedElement !== null && (
-                                            <>
-                                                <div className={`flex justify-between items-center text-xs text-blue-200 px-1 ${selectedNode !== null ? 'border-t border-slate-600 pt-2 mt-1' : ''}`}>
-                                                    <span>Beam {selectedElement}</span>
-                                                    <button onClick={() => setSelectedElement(null)} className="text-slate-400 hover:text-white"><i data-lucide="x" className="w-3 h-3"></i></button>
-                                                </div>
-                                                <div className="grid grid-cols-1 gap-2">
-                                                    {/* ADDED: Toggle Type Button */}
-                                                    <button onClick={() => setElements(prev => prev.map(e => e.id === selectedElement ? { ...e, type: e.type === 'truss' ? 'rigid' : 'truss' } : e))} className="bg-slate-600 hover:bg-slate-500 text-white text-[10px] py-1 rounded">
-                                                        Convert to {elements.find(e => e.id === selectedElement)?.type === 'truss' ? 'Normal Frame' : 'Truss Element'}
-                                                    </button>
+                                        <>
+                                            <div className="flex justify-between items-center text-xs text-blue-200 px-1">
+                                                <span className="font-bold">{selectedNode !== null ? t('node_sel') : t('beam_sel')}</span>
+                                                <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
+                                            </div>
 
-                                                    <button onClick={() => deleteElement(selectedElement)} className="bg-red-600 hover:bg-red-500 text-white text-xs py-1 rounded flex items-center justify-center gap-1"><i data-lucide="trash-2" className="w-3 h-3"></i> Delete Beam</button>
-                                                    {loads.some(l => l.elementId === selectedElement) && (
-                                                        <button onClick={() => setLoads(l => l.filter(x => x.elementId !== selectedElement))} className="bg-yellow-700 hover:bg-yellow-600 text-white text-[10px] py-1 rounded">Remove Dist. Load</button>
+                                            {/* PRIMARY OPTIONS */}
+                                            <div className="flex flex-col gap-2 mt-3">
+                                                {/* Option 1: Delete Node (Entirely) */}
+                                                <button onClick={() => deleteNode(selectedNode)} className="bg-red-600 hover:bg-red-500 text-white text-xs py-2 rounded flex items-center justify-center gap-2 font-bold shadow-sm">
+                                                    <Icon name="trash-2" className="w-4 h-4" />
+                                                {t('del_node_full')}</button>
+
+                                                {/* Option 2: Delete Support Only */}
+                                                {supports.some(s => s.nodeId === selectedNode) ? (
+                                                    <button onClick={() => setSupports(s => s.filter(x => x.nodeId !== selectedNode))} className="bg-orange-700 hover:bg-orange-600 text-white text-xs py-2 rounded flex items-center justify-center gap-2 font-bold shadow-sm">
+                                                        <Icon name="minus-circle" className="w-4 h-4" />
+                                                    {t('del_supp_only')}</button>
+                                                ) : (
+                                                    <div className="text-[10px] text-slate-500 text-center py-1 border border-slate-700 rounded border-dashed">
+                                                        No support attached
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Secondary Info: Attached Loads */}
+                                            <div className="mt-4 border-t border-slate-600 pt-2">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Attached Loads</span>
+                                                    {loads.some(l => l.nodeId === selectedNode) && (
+                                                        <button onClick={() => setLoads(l => l.filter(x => x.nodeId !== selectedNode))} className="text-[10px] text-yellow-500 hover:text-yellow-400 underline">Clear Loads</button>
                                                     )}
                                                 </div>
-                                            </>
-                                        )}
+                                                <div className="flex flex-col gap-1 mt-1 max-h-32 overflow-y-auto">
+                                                    {loads.map((l, index) => {
+                                                        if (l.nodeId !== selectedNode) return null;
+                                                        return (
+                                                            <div key={index} className="flex justify-between items-center bg-slate-800 p-1.5 rounded text-[10px] border border-slate-600">
+                                                                <span className="text-slate-300">
+                                                                    {l.type === 'settlement' ? 'Settlement' : `Force: ${l.fx||0}, ${l.fy||0}`}
+                                                                </span>
+                                                                <button onClick={() => deleteLoad(index)} className="text-red-400 hover:text-red-300 p-1">
+                                                                    <Icon name="trash-2" className="w-3 h-3" />
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {!loads.some(l => l.nodeId === selectedNode) && (
+                                                        <span className="text-[10px] text-slate-500 italic text-center">No loads</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
+                                    
+                                    {selectedElement !== null && (
+                                        <>
+                                            <div className={`flex justify-between items-center text-xs text-blue-200 px-1 ${selectedNode !== null ? 'border-t border-slate-600 pt-2 mt-1' : ''}`}>
+                                                <span>Beam {selectedElement}</span>
+                                                <button onClick={() => setSelectedElement(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-1 gap-2">
+                                                {/* ADDED: Toggle Type Button */}
+                                                <button onClick={() => { 
+                                                    addToHistory(); // <--- ADD THIS
+                                                    setElements(prev => prev.map(e => e.id === selectedElement ? { ...e, type: e.type === 'truss' ? 'rigid' : 'truss' } : e));
+                                                }} className="bg-slate-600 hover:bg-slate-500 text-white text-[10px] py-1 rounded">
+                                                    Convert to {elements.find(e => e.id === selectedElement)?.type === 'truss' ? 'Normal Frame' : 'Truss Element'}
+                                                </button>
+                                                
+                                            </div>
+                                        </>
+                                    )}
+                                    
                                     </div>
                                 </div>
                             )}
 
+                            {/* ... (Keep existing Tabs and Tab Content logic exactly as it was) ... */}
                             <div className="flex gap-2 border-b border-slate-700 pb-2">
-                                {['geo', 'prop', 'load', 'res'].map(t => (
-                                    <button key={t} onClick={() => setActiveTab(t)} className={`text-xs px-2 py-1 rounded ${activeTab===t ? 'bg-blue-600' : 'text-slate-400'}`}>
-                                        {t === 'geo' ? 'Geo' : t === 'prop' ? 'Prop' : t === 'load' ? 'Loads' : 'Res'}
+                                {['geo', 'prop', 'load', 'res'].map(tab => (
+                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`text-xs px-2 py-1 rounded ${activeTab===tab ? 'bg-blue-600' : 'text-slate-400'}`}>
+                                        {tab === 'geo' ? t('tab_geo') : tab === 'prop' ? t('tab_prop') : tab === 'load' ? t('tab_loads') : t('tab_res')}
                                     </button>
                                 ))}
                             </div>
 
                             {activeTab === 'geo' && (
                                 <div className="space-y-4 text-xs text-slate-400">
-                                    <p>Nodes: {nodes.length} | Elements: {elements.length}</p>
+                                    <p>{t('nodes')}: {nodes.length} | {t('elements')}: {elements.length}</p>
                                     <div className="bg-slate-800 p-2 rounded max-h-40 overflow-y-auto">
-                                        <div className="font-bold mb-1">Node List</div>
+                                        <div className="font-bold mb-1">{t('node_list')}</div>
                                         {nodes.map((n,i) => <div key={i} className="flex justify-between border-b border-slate-700 py-1"><span>{i}</span><span>{n.x.toFixed(1)}, {n.y.toFixed(1)}</span></div>)}
                                     </div>
                                     <div className="bg-slate-800 p-2 rounded max-h-40 overflow-y-auto">
-                                        <div className="font-bold mb-1">Member List</div>
+                                        <div className="font-bold mb-1">{t('member_list')}</div>
                                         {elements.map((e,i) => <div key={i} className="flex justify-between border-b border-slate-700 py-1"><span>{e.id}</span><span>{e.n1} → {e.n2}</span></div>)}
                                     </div>
-                                    <button onClick={()=>{setNodes([]); setElements([]); setSupports([]); setLoads([]); setResults(null);}} className="w-full bg-red-900/50 hover:bg-red-900 text-red-200 py-1 rounded">Clear All</button>
+                                    <button onClick={()=>{setNodes([]); setElements([]); setSupports([]); setLoads([]); setResults(null);}} className="w-full bg-red-900/50 hover:bg-red-900 text-red-200 py-1 rounded">{t('clear')}</button>
                                 </div>
                             )}
 
                             {activeTab === 'prop' && (
                                 <div className="space-y-4">
                                     <div className="bg-slate-800 p-3 rounded">
-                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">New Beam Properties</h3>
-                                        
-                                        {/* ADDED: Type Selector */}
+                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">{t('new_prop')}</h3>
                                         <div className="flex bg-slate-900 p-1 rounded mb-2">
-                                            <button onClick={()=>setElemProp({...elemProp, type:'rigid'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='rigid'?'bg-blue-600 text-white':'text-slate-500 hover:text-slate-300'}`}>Normal (Rigid)</button>
-                                            <button onClick={()=>setElemProp({...elemProp, type:'truss'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='truss'?'bg-blue-600 text-white':'text-slate-500 hover:text-slate-300'}`}>Truss (Pin)</button>
+                                            <button onClick={()=>setElemProp({...elemProp, type:'rigid'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='rigid'?'bg-blue-600 text-white':'text-slate-500 hover:text-slate-300'}`}>{t('normal')}</button>
+                                            <button onClick={()=>setElemProp({...elemProp, type:'truss'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='truss'?'bg-blue-600 text-white':'text-slate-500 hover:text-slate-300'}`}>{t('truss')}</button>
                                         </div>
-
                                         <div className="space-y-2 mb-2">
-                                            <label className="text-xs text-slate-500">Elastic Modulus (GPa)</label>
-                                            <input type="number" className="input-dark" value={elemProp.E} onChange={e=>setElemProp({...elemProp, E:e.target.value})} />
-                                            <label className="text-xs text-slate-500">Moment of Inertia (m4)</label>
-                                            <input type="number" className="input-dark" value={elemProp.I} onChange={e=>setElemProp({...elemProp, I:e.target.value})} />
-                                            <label className="text-xs text-slate-500">Area (m2)</label>
-                                            <input type="number" className="input-dark" value={elemProp.A} onChange={e=>setElemProp({...elemProp, A:e.target.value})} />
+                                            <label className="text-xs text-slate-500">{t('elastic')}</label>
+                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={elemProp.E} onChange={e=>setElemProp({...elemProp, E:e.target.value})} />
+                                            <label className="text-xs text-slate-500">{t('inertia')}</label>
+                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={elemProp.I} onChange={e=>setElemProp({...elemProp, I:e.target.value})} />
+                                            <label className="text-xs text-slate-500">{t('area')}</label>
+                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={elemProp.A} onChange={e=>setElemProp({...elemProp, A:e.target.value})} />
                                         </div>
                                     </div>
                                 </div>
@@ -1869,50 +2873,57 @@
                                 <div className="space-y-4">
                                     {/* SUPPORT PANEL */}
                                     <div className={`bg-slate-800 p-3 rounded ${tool === 'support' ? 'ring-2 ring-blue-500' : ''}`}>
-                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">Add Support</h3>
-                                        <div className="grid grid-cols-2 gap-2 mb-2">
-                                            <select className="input-dark" value={suppInput.type} onChange={e=>setSuppInput({...suppInput, type:e.target.value})}>
-                                                <option value="fixed">Fixed</option>
-                                                <option value="pin">Pin</option>
-                                                <option value="roller">Roller (Y-Restrain)</option>
-                                            </select>
-                                            <input type="number" placeholder="Angle °" className="input-dark" value={suppInput.angle} onChange={e=>setSuppInput({...suppInput, angle:e.target.value})} />
+                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">{t('tool_supp')}</h3>
+                                        
+                                        <label className="text-[10px] text-slate-500 block mb-1">{t('supp_type')}</label>
+                                        <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-lg mb-2">
+                                            {['fixed', 'pin', 'roller'].map(type => (
+                                                <button key={type} onClick={()=>setSuppInput(p=>({...p, type}))} 
+                                                    className={`text-[10px] py-1.5 rounded-md capitalize transition-colors ${suppInput.type===type ? 'bg-emerald-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>
+                                                    {t(type)}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <div className="flex items-center gap-2 mb-2">
+                                            {/* Angle Input */}
+                                            <input type="number" placeholder={t('angle_deg')} className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={suppInput.angle} onChange={e=>setSuppInput({...suppInput, angle:e.target.value})} />
                                         </div>
                                         
                                         {tool !== 'support' && (
                                             <div className="flex items-center gap-2 mb-2">
-                                                <span className="text-xs text-slate-500">Node:</span>
-                                                <input type="number" className="input-dark" value={suppInput.nodeId} onChange={e=>setSuppInput({...suppInput, nodeId:e.target.value})} />
+                                                <span className="text-xs text-slate-500">{t('node_label')}</span>
+                                                <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={suppInput.nodeId} onChange={e=>setSuppInput({...suppInput, nodeId:e.target.value})} />
                                             </div>
                                         )}
-                                        {tool === 'support' && <div className="text-xs text-blue-400 mb-2">Click nodes on canvas to apply.</div>}
                                         
-                                        <button onClick={() => addSupport()} className="w-full bg-emerald-600 hover:bg-emerald-500 py-1 rounded text-xs">Assign Support</button>
+                                        {tool === 'support' && <div className="text-xs text-blue-400 mb-2">{t('click_to_apply')}</div>}
+                                        
+                                        <button onClick={() => addSupport()} className="w-full bg-emerald-600 hover:bg-emerald-500 py-1 rounded text-xs text-white font-bold">{t('assign_supp')}</button>
                                     </div>
 
-                                    {/* LOAD PANEL - SIMPLIFIED */}
+                                    {/* LOAD PANEL */}
                                     <div className={`bg-slate-800 p-3 rounded ${tool === 'load' ? 'ring-2 ring-blue-500' : ''}`}>
-                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">Add Load</h3>
+                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">{t('tool_load')}</h3>
                                         
                                         <div className="mb-3">
-                                            <label className="text-xs text-slate-500 block mb-1">1. Select Load Type</label>
-                                            <select className="input-dark" value={loadType} onChange={e=>setLoadType(e.target.value)}>
-                                                <option value="point">Nodal Point Load</option>
-                                                <option value="point_span">Point on Beam</option>
-                                                <option value="dist">Distributed Load</option>
-                                                <option value="settlement">Support Settlement</option>
+                                            <label className="text-xs text-slate-500 block mb-1">{t('select_load_type_lbl')}</label>
+                                            <select className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={loadType} onChange={e=>setLoadType(e.target.value)}>
+                                                <option value="point">{t('pt_node')}</option>
+                                                <option value="point_span">{t('pt_beam')}</option>
+                                                <option value="dist">{t('dist_load')}</option>
+                                                <option value="settlement">{t('supp_sett')}</option>
                                             </select>
                                         </div>
 
                                         <div className="text-xs text-slate-400 p-2 bg-slate-900 rounded border border-slate-700">
-                                            <p className="mb-1 font-bold text-blue-400">Instructions:</p>
                                             {(loadType === 'dist' || loadType === 'point_span') 
-                                                ? "Click a BEAM on the canvas. A popup will appear to configure values."
-                                                : "Click a NODE on the canvas. A popup will appear to configure values."}
+                                                ? t('click_beam_inst') 
+                                                : t('click_node_inst')}
                                         </div>
                                         
                                         <div className="mt-3 text-xs text-slate-500 border-t border-slate-700 pt-2">
-                                            {loads.length} Loads active
+                                            {loads.length} {t('loads_count')}
                                         </div>
                                     </div>
                                 </div>
@@ -1921,35 +2932,31 @@
                             {activeTab === 'res' && results && (
                                 <div className="space-y-4 text-xs">
                                      <div className="bg-slate-800 p-3 rounded">
-                                        <h3 className="font-bold text-slate-400 mb-2 uppercase">Display Options</h3>
+                                        <h3 className="font-bold text-slate-400 mb-2 uppercase">{t('tool_opt')}</h3>
                                         <div className="flex flex-col gap-2">
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showDeformed} onChange={e=>setViewSettings({...viewSettings, showDeformed:e.target.checked})} /> Deformed Shape</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showSFD} onChange={e=>setViewSettings({...viewSettings, showSFD:e.target.checked})} /> Shear Force (SFD)</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showBMD} onChange={e=>setViewSettings({...viewSettings, showBMD:e.target.checked})} /> Bending Moment (BMD)</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showAFD} onChange={e=>setViewSettings({...viewSettings, showAFD:e.target.checked})} /> Axial Force (AFD)</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showReactions} onChange={e=>setViewSettings({...viewSettings, showReactions:e.target.checked})} /> Show Reactions</label>
-                                            <div className="mt-2"><label>Deflection Scale</label><input type="range" min="1" max="500" value={viewSettings.defScale} onChange={e=>setViewSettings({...viewSettings, defScale:Number(e.target.value)})} className="w-full"/></div>
-                                            <div><label>Diagram Scale</label><input type="range" min="0.1" max="5" step="0.1" value={viewSettings.diaScale} onChange={e=>setViewSettings({...viewSettings, diaScale:Number(e.target.value)})} className="w-full"/></div>
+                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showDeformed} onChange={e=>setViewSettings({...viewSettings, showDeformed:e.target.checked})} /> {t('def_shape')}</label>
+                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showSFD} onChange={e=>setViewSettings({...viewSettings, showSFD:e.target.checked})} /> {t('sfd')}</label>
+                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showBMD} onChange={e=>setViewSettings({...viewSettings, showBMD:e.target.checked})} /> {t('bmd')}</label>
+                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showAFD} onChange={e=>setViewSettings({...viewSettings, showAFD:e.target.checked})} /> {t('afd')}</label>
+                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showReactions} onChange={e=>setViewSettings({...viewSettings, showReactions:e.target.checked})} /> {t('show_react')}</label>
+                                            <div className="mt-2"><label>{t('def_scale')}</label><input type="range" min="1" max="500" value={viewSettings.defScale} onChange={e=>setViewSettings({...viewSettings, defScale:Number(e.target.value)})} className="w-full"/></div>
+                                            <div><label>{t('dia_scale')}</label><input type="range" min="0.1" max="5" step="0.1" value={viewSettings.diaScale} onChange={e=>setViewSettings({...viewSettings, diaScale:Number(e.target.value)})} className="w-full"/></div>
                                         </div>
                                         <div className="flex justify-between items-center mt-2 border-t border-slate-700 pt-2">
-                                        <label className="text-xs text-slate-400">Text Size</label>
-                                        <div className="flex gap-1">
-                                            <button onClick={()=>setTextSize(s=>Math.max(6, s-1))} className="bg-slate-700 px-2 rounded hover:bg-slate-600 text-xs">-</button>
-                                            <span className="w-6 text-center text-xs pt-1">{textSize}</span>
-                                            <button onClick={()=>setTextSize(s=>Math.min(24, s+1))} className="bg-slate-700 px-2 rounded hover:bg-slate-600 text-xs">+</button>
+                                            <label className="text-xs text-slate-400">{t('text_size')}</label>
+                                            {/* ... existing font buttons ... */}
                                         </div>
-                                    </div>
                                     </div>
                                     <div className="bg-slate-800 p-3 rounded max-h-60 overflow-y-auto">
                                         <table className="w-full text-left border-collapse">
-                                            <thead><tr className="text-slate-500 border-b border-slate-600"><th className="py-1">El</th><th>M_start</th><th>M_end</th><th>V_start</th></tr></thead>
+                                            <thead><tr className="text-slate-500 border-b border-slate-600"><th className="py-1">{t('el_col')}</th><th>{t('m_start')}</th><th>{t('m_end')}</th><th>{t('v_start')}</th></tr></thead>
                                             <tbody>
+                                                {/* ... existing table body ... */}
                                                 {results.memberForces.map(mf => (
                                                     <tr key={mf.id} className="border-b border-slate-700/50 font-mono">
                                                         <td className="py-1">{mf.id}</td>
                                                         <td className="text-slate-300">{mf.moment1.toFixed(1)}</td>
                                                         <td className="text-slate-300">{mf.moment2.toFixed(1)}</td>
-                                                        {/* MODIFY: Use shearStart instead of shear */}
                                                         <td className="text-slate-300">{mf.shearStart ? mf.shearStart.toFixed(1) : '0.0'}</td>
                                                     </tr>
                                                 ))}
@@ -1958,31 +2965,52 @@
                                     </div>
                                 </div>
                             )}
+
                         </div>
-                        <div className="p-4 border-t border-slate-700 bg-slate-800">
-                            {error ? (
-                                <div className="text-red-400 text-xs font-bold flex items-center gap-2"><i data-lucide="alert-triangle" className="w-4 h-4"></i> {error}</div>
+                        {/* Sidebar Footer (Status) */}
+                        <div className="p-4 border-t border-slate-700 bg-slate-900">
+                             {error ? (
+                                <div className="text-red-400 text-xs font-bold flex items-center gap-2"><Icon name="alert-triangle" className="w-4 h-4" /> {error}</div>
                             ) : (
-                                <div className="text-emerald-400 text-xs font-bold flex items-center gap-2"><i data-lucide="check-circle" className="w-4 h-4"></i> Auto-Solved</div>
+                                <div className="text-emerald-400 text-xs font-bold flex items-center gap-2"><Icon name="check-circle" className="w-4 h-4" /> {t('auto_solved')}</div>
                             )}
                         </div>
                     </div>
 
-                    <div className="flex-1 flex flex-col">
-                        <CanvasView nodes={nodes} elements={elements} supports={supports} loads={loads} results={results} viewSettings={viewSettings} tool={tool} selectedNode={selectedNode} selectedElement={selectedElement} onCanvasInteract={handleCanvasInteract} textSize={textSize} />
+                    {/* 4. Canvas Container */}
+                    <div className="w-full h-full">
+                        {/* [MODIFY] Pass 'selectedLoad' as a prop */}
+                        <CanvasView 
+                            nodes={nodes} 
+                            elements={elements} 
+                            supports={supports} 
+                            loads={loads} 
+                            results={results} 
+                            viewSettings={viewSettings} 
+                            tool={tool} 
+                            selectedNode={selectedNode} 
+                            selectedElement={selectedElement} 
+                            selectedLoad={selectedLoad} // <--- ADD THIS
+                            onCanvasInteract={handleCanvasInteract} 
+                            textSize={textSize} 
+                            isDarkMode={isDarkMode}
+                            t={t}
+                        />
                     </div>
 
+                    {/* Modals remain the same */}
                     {pendingLoad && (
                         <LoadModal 
                             loadConfig={pendingLoad} 
                             onConfirm={confirmLoad} 
                             onCancel={() => setPendingLoad(null)} 
+                            isDarkMode={isDarkMode} // <--- PASS PROP
+                            t={t}
                         />
                     )}
                 </div>
             );
         };
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
