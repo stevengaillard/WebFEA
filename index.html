@@ -1395,8 +1395,8 @@
                     ctx.strokeStyle = '#60a5fa'; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
                 }
 
-            // MODIFY: Added 'textSize' to dependencies so it redraws immediately
-            }, [nodes, elements, supports, loads, results, pan, zoom, viewSettings, tool, selectedNode, selectedElement, selectedLoad, mousePos, textSize]); // <--- ADD selectedLoad HERE
+            // MODIFY: Added 'textSize' and 'isDarkMode' to dependencies so it redraws immediately
+            }, [nodes, elements, supports, loads, results, pan, zoom, viewSettings, tool, selectedNode, selectedElement, selectedLoad, mousePos, textSize, isDarkMode]);
 
             // Interaction Handlers
             // Interaction Handlers
