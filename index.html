@@ -2225,13 +2225,25 @@
                 else if (tool === 'load') {
                     // 1. Check if we clicked something valid for the current Load Type
                     if ((loadType === 'dist' || loadType === 'point_span') && elementId !== null) {
+                        // [MODIFY] Calculate Element Length for smart defaults
+                        const el = elements.find(e => e.id === elementId);
+                        let L = 5; // Fallback
+                        if (el) {
+                            const n1 = nodes[el.n1];
+                            const n2 = nodes[el.n2];
+                            L = Math.sqrt(Math.pow(n2.x - n1.x, 2) + Math.pow(n2.y - n1.y, 2));
+                        }
+
                         // Open Modal for Element Load
                         setPendingLoad({
                             type: loadType,
                             elementId: elementId,
                             // Defaults: -90 Local = "Down" (Transverse) in Standard convention
-                            mag: 10, angle: -90, angleRef: 'local', dist: 0, 
-                            wStart: 10, wEnd: 10, dStart: 0, dEnd: 5
+                            mag: 10, angle: -90, angleRef: 'local', 
+                            dist: parseFloat((L / 2).toFixed(3)), // Default: Middle of beam
+                            wStart: 10, wEnd: 10, 
+                            dStart: 0, 
+                            dEnd: parseFloat(L.toFixed(3)) // Default: Full length of beam
                         });
                     }
                     else if ((loadType === 'point' || loadType === 'settlement') && nodeId !== null) {
