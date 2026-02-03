@@ -1690,58 +1690,102 @@
                             {/* NODAL POINT */}
                             {data.type === 'point' && (
                                 <>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div><label className="text-[10px] text-slate-500">Fx (kN)</label><input type="number" className="input-dark" value={data.fx} onChange={e=>update('fx', e.target.value)} /></div>
-                                        <div><label className="text-[10px] text-slate-500">Fy (kN)</label><input type="number" className="input-dark" value={data.fy} onChange={e=>update('fy', e.target.value)} /></div>
+                                    <div className="grid grid-cols-2 gap-2 mb-2">
+                                        <div>
+                                            <label className="text-[10px] text-slate-500">Fx (kN)</label>
+                                            <input type="number" className={inputClass} value={data.fx} onChange={e=>update('fx', e.target.value)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] text-slate-500">Fy (kN)</label>
+                                            <input type="number" className={inputClass} value={data.fy} onChange={e=>update('fy', e.target.value)} />
+                                        </div>
                                     </div>
-                                    <div><label className="text-[10px] text-slate-500">Moment (kNm)</label><input type="number" className="input-dark" value={data.m} onChange={e=>update('m', e.target.value)} /></div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-500">{t('moment')} (kNm)</label>
+                                        <input type="number" className={inputClass} value={data.m} onChange={e=>update('m', e.target.value)} />
+                                    </div>
                                 </>
                             )}
 
                             {/* BEAM POINT */}
                             {data.type === 'point_span' && (
                                 <>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <label className="text-[10px] text-gray-500">{t('moment')} (kNm)</label>
-                                        <label className="text-[10px] text-gray-500">{t('mag')} (kN)</label>
+                                    <div className="grid grid-cols-2 gap-2 mb-2">
+                                        <div>
+                                            <label className="text-[10px] text-slate-500">{t('mag')} (kN)</label>
+                                            <input type="number" className={inputClass} value={data.mag} onChange={e=>update('mag', e.target.value)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] text-slate-500">{t('angle_deg')}</label>
+                                            <input type="number" className={inputClass} value={data.angle} onChange={e=>update('angle', e.target.value)} />
+                                        </div>
                                     </div>
-                                    {/* ADDED: Ref Toggle */}
+
+                                    {/* Ref Toggle */}
                                     <div className="flex gap-2 text-[10px] mb-1">
-                                        <label className="text-slate-500 pt-1">Ref:</label>
-                                        <button onClick={onCancel} className="flex-1 bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded">{t('cancel')}</button>
-                                        <button onClick={() => onConfirm(data)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-xs py-2 rounded font-bold">{t('apply')}</button>
+                                        <label className="text-slate-500 pt-1">{t('ref')}:</label>
+                                        <button onClick={()=>update('angleRef', 'global')} className={`px-2 py-0.5 rounded ${data.angleRef==='global'?'bg-blue-600':'bg-slate-700 text-slate-300'}`}>{t('global')}</button>
+                                        <button onClick={()=>update('angleRef', 'local')} className={`px-2 py-0.5 rounded ${data.angleRef==='local'?'bg-blue-600':'bg-slate-700 text-slate-300'}`}>{t('local')}</button>
                                     </div>
-                                    <div><label className="text-[10px] text-slate-500">Distance from Start (m)</label><input type="number" className="input-dark" value={data.dist} onChange={e=>update('dist', e.target.value)} /></div>
+
+                                    <div>
+                                        <label className="text-[10px] text-slate-500">{t('dist')} (m)</label>
+                                        <input type="number" className={inputClass} value={data.dist} onChange={e=>update('dist', e.target.value)} />
+                                    </div>
                                 </>
                             )}
 
                             {/* DISTRIBUTED */}
                             {data.type === 'dist' && (
                                 <>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div><label className="text-[10px] text-slate-500">Start (kN/m)</label><input type="number" className="input-dark" value={data.wStart} onChange={e=>update('wStart', e.target.value)} /></div>
-                                        <div><label className="text-[10px] text-slate-500">End (kN/m)</label><input type="number" className="input-dark" value={data.wEnd} onChange={e=>update('wEnd', e.target.value)} /></div>
+                                    <div className="grid grid-cols-2 gap-2 mb-2">
+                                        <div>
+                                            {/* Reuse 'mag' translation + manual Start/End labels */}
+                                            <label className="text-[10px] text-slate-500">{t('mag')} Start (kN/m)</label>
+                                            <input type="number" className={inputClass} value={data.wStart} onChange={e=>update('wStart', e.target.value)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] text-slate-500">{t('mag')} End (kN/m)</label>
+                                            <input type="number" className={inputClass} value={data.wEnd} onChange={e=>update('wEnd', e.target.value)} />
+                                        </div>
                                     </div>
-                                    <div><label className="text-[10px] text-slate-500">Angle (°)</label><input type="number" className="input-dark" value={data.angle} onChange={e=>update('angle', e.target.value)} /></div>
-                                    {/* ADDED: Ref Toggle */}
-                                    <div className="flex gap-2 text-[10px] mb-1">
-                                        <label className="text-slate-500 pt-1">Ref:</label>
-                                        <button onClick={()=>update('angleRef', 'global')} className={`px-2 py-0.5 rounded ${data.angleRef==='global'?'bg-blue-600':'bg-slate-700'}`}>Global</button>
-                                        <button onClick={()=>update('angleRef', 'local')} className={`px-2 py-0.5 rounded ${data.angleRef==='local'?'bg-blue-600':'bg-slate-700'}`}>Local</button>
+                                    <div className="mb-2">
+                                        <label className="text-[10px] text-slate-500">{t('angle_deg')}</label>
+                                        <input type="number" className={inputClass} value={data.angle} onChange={e=>update('angle', e.target.value)} />
                                     </div>
+                                    
+                                    {/* Ref Toggle */}
+                                    <div className="flex gap-2 text-[10px] mb-2">
+                                        <label className="text-slate-500 pt-1">{t('ref')}:</label>
+                                        <button onClick={()=>update('angleRef', 'global')} className={`px-2 py-0.5 rounded ${data.angleRef==='global'?'bg-blue-600 text-white':'bg-slate-700 text-slate-300'}`}>{t('global')}</button>
+                                        <button onClick={()=>update('angleRef', 'local')} className={`px-2 py-0.5 rounded ${data.angleRef==='local'?'bg-blue-600 text-white':'bg-slate-700 text-slate-300'}`}>{t('local')}</button>
+                                    </div>
+                                    
                                     <div className="grid grid-cols-2 gap-2">
-                                        <div><label className="text-[10px] text-slate-500">Dist Start (m)</label><input type="number" className="input-dark" value={data.dStart} onChange={e=>update('dStart', e.target.value)} /></div>
-                                        <div><label className="text-[10px] text-slate-500">Dist End (m)</label><input type="number" className="input-dark" value={data.dEnd} onChange={e=>update('dEnd', e.target.value)} /></div>
+                                        <div>
+                                            <label className="text-[10px] text-slate-500">{t('dist_start')} (m)</label>
+                                            <input type="number" className={inputClass} value={data.dStart} onChange={e=>update('dStart', e.target.value)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] text-slate-500">{t('dist_end')} (m)</label>
+                                            <input type="number" className={inputClass} value={data.dEnd} onChange={e=>update('dEnd', e.target.value)} />
+                                        </div>
                                     </div>
                                 </>
                             )}
                             
                             {/* SETTLEMENT */}
                             {data.type === 'settlement' && (
-                                <>
-                                    <div><label className="text-[10px] text-slate-500">DX (m)</label><input type="number" className="input-dark" value={data.dx} onChange={e=>update('dx', e.target.value)} /></div>
-                                    <div><label className="text-[10px] text-slate-500">DY (m)</label><input type="number" className="input-dark" value={data.dy} onChange={e=>update('dy', e.target.value)} /></div>
-                                </>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="text-[10px] text-slate-500">{t('lbl_dx')}</label>
+                                        <input type="number" className={inputClass} value={data.dx} onChange={e=>update('dx', e.target.value)} />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-500">{t('lbl_dy')}</label>
+                                        <input type="number" className={inputClass} value={data.dy} onChange={e=>update('dy', e.target.value)} />
+                                    </div>
+                                </div>
                             )}
                         </div>
 
