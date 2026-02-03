@@ -693,34 +693,57 @@
                 };
                 const w = canvas.width, h = canvas.height;
 
-                // Theme Colors
+                // Theme Colors - Professional Engineering Palette
                 const colors = isDarkMode ? {
-                    bg: '#0f172a', grid: '#1e293b', text: '#94a3b8', 
-                    node: '#f8fafc', trussDef: '#94a3b8', beamDef: '#cbd5e1'
+                    // Dark Mode: Deep Blueprint
+                    bg: '#0f172a',      // Slate-900
+                    grid: '#1e293b',    // Slate-800
+                    gridText: '#475569',// Slate-600
+                    element: '#94a3b8', // Slate-400 (Light Grey for contrast)
+                    node: '#e2e8f0',    // Slate-200
+                    text: '#e2e8f0',    // Slate-200
+                    dimText: '#64748b', // Slate-500
+                    accent: '#38bdf8'   // Sky-400
                 } : {
-                    bg: '#ffffff', grid: '#e2e8f0', text: '#64748b', 
-                    node: '#1e293b', trussDef: '#64748b', beamDef: '#475569'
+                    // Light Mode: Clean Paper / CAD Style
+                    bg: '#ffffff',      // Pure White
+                    grid: '#e2e8f0',    // Slate-200 (Subtle)
+                    gridText: '#94a3b8',// Slate-400
+                    element: '#334155', // Slate-700 (Dark architectural grey lines)
+                    node: '#0f172a',    // Slate-900 (High contrast points)
+                    text: '#0f172a',    // Slate-900 (Sharp text)
+                    dimText: '#64748b', // Slate-500
+                    accent: '#2563eb'   // Blue-600
                 };
+                
+                // Professional Font Stack
+                const font = `${textSize}px "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
+                const fontBold = `bold ${textSize}px "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
 
                 // Clear & Grid
                 ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, w, h);
-                ctx.strokeStyle = colors.grid; ctx.lineWidth = 1; ctx.beginPath();
+                
+                // Draw Grid
+                ctx.strokeStyle = colors.grid; 
+                ctx.lineWidth = isDarkMode ? 1 : 0.5; // Thinner lines in light mode for elegance
+                ctx.beginPath();
 
                 const startX = Math.floor((-pan.x / zoom) / gridStep);
                 const endX = Math.floor(((w - pan.x) / zoom) / gridStep) + 1;
                 const startY = Math.floor(((pan.y - h) / zoom) / gridStep);
                 const endY = Math.floor((pan.y / zoom) / gridStep) + 1;
 
-                // MODIFY: Use textSize and dynamic offsets
-                ctx.font = `${textSize}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-                const pad = textSize * 0.5;
+                // Setup Font for Axis Labels
+                ctx.font = font; 
+                ctx.textAlign = 'left'; 
+                ctx.textBaseline = 'top';
 
                 for (let i = startX; i <= endX; i++) { 
                     const val = i * gridStep;
                     const p = toScreen(val, 0); 
                     ctx.moveTo(p.x, 0); ctx.lineTo(p.x, h);
                     if (i % 2 === 0) { 
-                        ctx.fillStyle = '#475569'; 
+                        ctx.fillStyle = colors.gridText; 
                         ctx.fillText(val.toFixed(3).replace(/\.?0+$/, '') + 'm', p.x + 2, h - (textSize + 5)); 
                     }
                 }
@@ -728,13 +751,16 @@
                     const val = i * gridStep;
                     const p = toScreen(0, val); 
                     ctx.moveTo(0, p.y); ctx.lineTo(w, p.y);
-                    if (i % 2 === 0) { ctx.fillStyle = '#475569'; ctx.fillText(val.toFixed(3).replace(/\.?0+$/, '') + 'm', 5, p.y + 2); }
+                    if (i % 2 === 0) { 
+                        ctx.fillStyle = colors.gridText; 
+                        ctx.fillText(val.toFixed(3).replace(/\.?0+$/, '') + 'm', 5, p.y + 2); 
+                    }
                 }
                 ctx.stroke();
 
+                // Origin Marker
                 const origin = toScreen(0,0);
-                ctx.fillStyle = '#64748b'; ctx.beginPath(); ctx.arc(origin.x, origin.y, 3, 0, 2*Math.PI); ctx.fill();
-
+                ctx.fillStyle = colors.accent; ctx.beginPath(); ctx.arc(origin.x, origin.y, 3, 0, 2*Math.PI); ctx.fill();
                 // Elements
                 elements.forEach(el => {
                     const n1 = nodes[el.n1], n2 = nodes[el.n2];
@@ -792,36 +818,33 @@
                     }
 
                     // Style based on Type & Results
-                    let strokeColor = el.type === 'truss' ? '#94a3b8' : '#cbd5e1'; // Default
+                    // Element Style
+                    let strokeColor = colors.element; // Use the theme color by default
                     
                     if (results && el.type === 'truss') {
+                        // ... (Keep existing Truss Tension/Compression color logic, it is already good) ...
                         const res = results.memberForces.find(f => f.id === el.id);
                         if (res) {
                             const val = res.axial;
-                            // Normalize based on global max axial force found in stats
                             const maxA = (plotData && plotData.stats && plotData.stats.maxA > 0.1) ? plotData.stats.maxA : 1; 
                             const ratio = Math.min(1, Math.abs(val) / maxA);
 
                             if (Math.abs(val) < 0.001) {
-                                strokeColor = '#ffffff';
+                                strokeColor = isDarkMode ? '#475569' : '#cbd5e1'; // Neutral for zero force
                             } else if (val > 0) {
-                                // Tension (Blue): Mix White (255,255,255) -> Blue-500 (59,130,246)
-                                const r = Math.round(255 + (59 - 255) * ratio);
-                                const g = Math.round(255 + (130 - 255) * ratio);
-                                const b = Math.round(255 + (246 - 255) * ratio);
-                                strokeColor = `rgb(${r},${g},${b})`;
+                                // Tension (Blue)
+                                strokeColor = isDarkMode ? `rgb(${Math.round(59 + 100*ratio)}, ${Math.round(130 + 50*ratio)}, 255)` : '#2563eb';
                             } else {
-                                // Compression (Red): Mix White (255,255,255) -> Red-500 (239,68,68)
-                                const r = Math.round(255 + (239 - 255) * ratio);
-                                const g = Math.round(255 + (68 - 255) * ratio);
-                                const b = Math.round(255 + (68 - 255) * ratio);
-                                strokeColor = `rgb(${r},${g},${b})`;
+                                // Compression (Red)
+                                strokeColor = isDarkMode ? `rgb(255, ${Math.round(68 + 100*ratio)}, ${Math.round(68 + 100*ratio)})` : '#dc2626';
                             }
                         }
                     }
 
                     ctx.strokeStyle = strokeColor;
-                    ctx.lineWidth = 3;
+                    ctx.lineWidth = isDarkMode ? 3 : 2.5; // Slightly finer lines in light mode for precision
+                    ctx.lineCap = 'round'; // Smooth ends
+                    ctx.lineJoin = 'round';
                     ctx.beginPath();
 
                     // MODIFY: Draw Curved Shape if Deformed is ON and data exists
@@ -1002,14 +1025,23 @@
 
                             // Helper to draw diagram value text
                             const drawLabel = (t, val, unit, offsetPx, color, prefix = '') => {
-                                if (Math.abs(val) < 0.01) return; // Skip zeros
+                                if (Math.abs(val) < 0.01) return; 
                                 const lx = drawP1.x + t * dx + nx * offsetPx;
                                 const ly = drawP1.y + t * dy + ny * offsetPx;
-                                ctx.fillStyle = color; ctx.font = `${textSize}px monospace`;
                                 
-                                // Dynamic padding from the dot
-                                const pad = textSize * 0.4;
-                                ctx.fillText(`${prefix}${val.toFixed(2)}${unit}`, lx + pad, ly - pad);
+                                // Text Background for readability
+                                ctx.font = fontBold; // Use bold font
+                                const text = `${prefix}${val.toFixed(2)}${unit}`;
+                                const metrics = ctx.measureText(text);
+                                
+                                // Optional: Small background box for text in busy areas
+                                ctx.fillStyle = isDarkMode ? 'rgba(15, 23, 42, 0.7)' : 'rgba(255, 255, 255, 0.8)';
+                                const pad = 2;
+                                ctx.fillRect(lx + pad, ly - pad - textSize, metrics.width + pad*2, textSize + pad*2);
+
+                                ctx.fillStyle = color; 
+                                ctx.fillText(text, lx + pad*2, ly - pad);
+                                
                                 ctx.beginPath(); ctx.arc(lx, ly, 2, 0, 2*Math.PI); ctx.fill();
                             };
 
@@ -1244,12 +1276,23 @@
                         const s = viewSettings.defScale;
                         p = toScreen(n.x + results.displacements[3*i]*s, n.y + results.displacements[3*i+1]*s);
                     }
-                    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2*Math.PI); 
-                    if (selectedNode === i) { ctx.fillStyle = '#3b82f6'; ctx.fill(); ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2; ctx.stroke(); ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI); ctx.stroke(); } 
-                    else { ctx.fillStyle = '#f8fafc'; ctx.fill(); }
                     
-                    ctx.fillStyle = '#94a3b8'; ctx.font = `${textSize}px monospace`; ctx.fillText(i, p.x + 8, p.y - 8);
-
+                    // Node Circle
+                    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 2*Math.PI); 
+                    if (selectedNode === i) { 
+                        ctx.fillStyle = colors.accent; ctx.fill(); 
+                        ctx.strokeStyle = isDarkMode ? '#fff' : '#000'; ctx.lineWidth = 2; ctx.stroke(); 
+                        // Selection Halo
+                        ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, 2*Math.PI); 
+                        ctx.strokeStyle = colors.accent; ctx.lineWidth = 1; ctx.stroke(); 
+                    } else { 
+                        ctx.fillStyle = colors.node; ctx.fill(); 
+                    }
+                    
+                    // Node Label
+                    ctx.fillStyle = colors.dimText; 
+                    ctx.font = font; // Use new font variable
+                    ctx.fillText(i, p.x + 6, p.y - 6);
                     // Helper for arrowheads
                     const drawArrowHead = (x, y, angle, color) => {
                         ctx.save();
@@ -1636,19 +1679,19 @@
                     </div>
                     {/* ADDED: Results Legend */}
                     {results && plotData && (
-                        <div className="absolute bottom-4 right-4 z-20 bg-slate-800/90 p-3 rounded text-xs text-slate-200 shadow-lg pointer-events-none border border-slate-600">
-                            <h4 className="font-bold mb-1 border-b border-slate-600 pb-1">{t('global_ext')}</h4>
+                        <div className={`absolute bottom-4 right-4 z-20 p-3 rounded text-xs shadow-lg pointer-events-none backdrop-blur-md ${isDarkMode ? 'bg-slate-800/90 text-slate-200 border border-slate-600' : 'bg-white/90 text-gray-700 border border-gray-200'}`}>
+                            <h4 className={`font-bold mb-1 border-b pb-1 ${isDarkMode ? 'border-slate-600' : 'border-gray-300'}`}>{t('global_ext')}</h4>
                             {viewSettings.showBMD && (
-                                <div className="text-red-400">{t('max_m')}: {plotData.stats.maxM.toFixed(2)} kNm</div>
+                                <div className="text-red-500 font-mono">{t('max_m')}: {plotData.stats.maxM.toFixed(2)} kNm</div>
                             )}
                             {viewSettings.showSFD && (
-                                <div className="text-blue-400">{t('max_v')}: {plotData.stats.maxV.toFixed(2)} kN</div>
+                                <div className="text-blue-500 font-mono">{t('max_v')}: {plotData.stats.maxV.toFixed(2)} kN</div>
                             )}
                             {viewSettings.showAFD && (
-                                <div className="text-pink-400">{t('max_a')}: {plotData.stats.maxA.toFixed(2)} kN</div>
+                                <div className="text-pink-500 font-mono">{t('max_a')}: {plotData.stats.maxA.toFixed(2)} kN</div>
                             )}
                             {viewSettings.showDeformed && (
-                                <div className="text-emerald-400">{t('max_d')}: {plotData.stats.maxD.toExponential(2)} m</div>
+                                <div className="text-emerald-600 font-mono">{t('max_d')}: {plotData.stats.maxD.toExponential(2)} m</div>
                             )}
                         </div>
                     )}
@@ -1659,13 +1702,15 @@
         // TIER 2.5: UI COMPONENTS (MODALS)
         // ==========================================
 
-        const LoadModal = ({ loadConfig, onConfirm, onCancel, isDarkMode, t }) => { // <--- ADD t
+        const LoadModal = ({ loadConfig, onConfirm, onCancel, isDarkMode, t }) => { 
+            // Reuse the professional logic from uiClasses but defined locally for the modal's specific structure
             const inputClass = isDarkMode 
-                ? "bg-slate-700 border-slate-600 text-white w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border" 
-                : "bg-slate-50 border-slate-300 text-slate-900 w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border";
+                ? "bg-slate-900/50 border-slate-600 text-slate-200 w-full rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 border transition-colors" 
+                : "bg-gray-50 border-gray-300 text-gray-900 w-full rounded px-2 py-1.5 text-xs focus:outline-none focus:bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 border transition-colors";
             
-            const panelClass = isDarkMode ? "bg-slate-800 border-slate-600 text-white" : "bg-white border-slate-200 text-slate-900";
-
+            const panelClass = isDarkMode 
+                ? "bg-slate-800 border-slate-600 text-slate-100 shadow-2xl" 
+                : "bg-white border-gray-200 text-gray-800 shadow-2xl";
             // Local state for the inputs
             const [data, setData] = useState({ ...loadConfig });
 
@@ -1805,6 +1850,42 @@
         // [ADD] Translations Dictionary
         const TRANSLATIONS = {
             en: {
+                // ... (Keep English as is)
+                sec_lib: "Section Library",
+                shape: "Shape",
+                saved_sec: "Saved Sections",
+                col_name: "Name",
+                col_A: "Area (m²)",
+                col_I: "Inertia (m⁴)",
+                col_E: "E (GPa)",
+                sel_sec: "Select Section...",
+                save_sec: "Save Section",
+                sec_name: "Section Name",
+                dims: "Dimensions (mm)",
+                depth: "Depth (d)",
+                width: "Width (b)",
+                web_thk: "Web Thk (tw)",
+                flange_thk: "Flange Thk (tf)",
+                calc_props: "Calculate Properties",
+                shape_rect: "Rectangle",
+                shape_i: "I-Shape",
+                shape_tri: "Triangle",
+                shape_c: "C-Channel",
+                shape_circ: "Circle",
+                shape_pipe: "Pipe",
+                shape_tube: "Tube",
+                diameter: "Diameter (d)",
+                thickness: "Thickness (t)",
+                custom: "Custom",
+                res_header_el: "El",
+                res_header_m_max: "M_max",
+                res_header_m_min: "M_min",
+                res_header_v_max: "V_max",
+                res_header_v_min: "V_min",
+                res_header_n_max: "N_max",
+                res_header_n_min: "N_min",
+                res_header_d_max: "D_max",
+                res_header_d_min: "D_min",
                 sett_el: "Element Settings",
                 sett_supp: "Support Settings",
                 sett_load: "Load Settings",
@@ -1905,7 +1986,6 @@
                 ref: "Ref",
                 global: "Global",
                 local: "Local",
-                // [ADD] New keys below
                 auto_solved: "Auto-Solved",
                 el_col: "El",
                 m_start: "M_start",
@@ -1915,8 +1995,6 @@
                 tab_prop: "Properties",
                 tab_loads: "Loads",
                 tab_res: "Results",
-                
-                // Loads Panel Specifics
                 select_load_type_lbl: "1. Select Load Type",
                 node_label: "Node:",
                 angle_deg: "Angle °",
@@ -1924,139 +2002,207 @@
                 loads_count: "Loads active",
                 lbl_dx: "DX (m)",
                 lbl_dy: "DY (m)",
-                
-                // Ensure Toolbar Tooltips match
                 undo_tip: "Undo (Ctrl+Z)",
                 redo_tip: "Redo (Ctrl+Y)",
                 toggle_theme_tip: "Toggle Theme",
-                toggle_lang_tip: "Switch Language"
+                toggle_lang_tip: "Switch Language",
+                el_info: "Element Information",
+                sec_used: "Section",
+                length: "Length (m)",
+                self_wt: "Self-Weight (kN/m)",
+                node_1: "Node 1",
+                node_2: "Node 2",
+                switch_sec: "Switch Section",
+                no_sec: "Custom",
+                // Results Tab
+                res_no_data: "Add nodes and elements to see results",
+                res_elem_forces: "Element Forces Summary",
+                res_node_disp: "Node Displacements",
+                res_support_react: "Support Reactions",
+                res_col_node: "Node",
+                res_col_dx: "Δx (mm)",
+                res_col_dy: "Δy (mm)",
+                res_col_theta: "θ (rad)",
+                res_col_rx: "Rx (kN)",
+                res_col_ry: "Ry (kN)",
+                res_col_rm: "Rm (kNm)",
             },
             zh: {
-                sett_el: "单元设置",
-                sett_supp: "支座设置",
-                sett_load: "荷载设置",
-                title: "WebFEA - 二维框架分析",
-                load_portal: "加载门式刚架示例",
-                load_truss: "加载桁架桥示例",
-                save: "保存项目",
-                load: "加载项目",
-                clear: "清空所有",
-                nodes: "节点",
-                elements: "单元",
-                node_list: "节点列表",
-                member_list: "单元列表",
-                select_action: "选择操作",
-                node_sel: "节点选择",
-                beam_sel: "单元选择",
-                del_node_full: "删除节点和支座",
-                del_supp_only: "仅删除支座",
-                del_sel: "删除选中项",
-                conv_truss: "转换为桁架单元",
-                conv_rigid: "转换为刚接框架",
-                attached_loads: "附加荷载",
-                clear_loads: "清除荷载",
-                no_supp: "无支座",
-                no_loads: "无荷载",
-                tool_select: "选择",
-                tool_node: "添加节点",
-                tool_beam: "添加单元",
-                tool_supp: "添加支座",
-                tool_load: "添加荷载",
-                tool_opt: "显示选项",
-                toggle_theme: "切换主题",
-                toggle_lang: "切换语言",
-                sett: "设置",
-                el_type: "单元类型",
-                normal: "普通刚接",
-                truss: "桁架(铰接)",
-                supp_type: "支座类型",
+                sec_lib: "斷面庫",
+                shape: "斷面形狀",
+                saved_sec: "已存斷面",
+                col_name: "名稱",
+                col_A: "面積 (m²)",
+                col_I: "慣性矩 (m⁴)",
+                col_E: "彈性模數 (GPa)",
+                sel_sec: "選擇斷面...",
+                save_sec: "儲存斷面",
+                sec_name: "斷面名稱",
+                dims: "尺寸 (mm)",
+                depth: "深度 (d)",
+                width: "寬度 (b)",
+                web_thk: "腹板厚 (tw)",
+                flange_thk: "翼板厚 (tf)",
+                calc_props: "計算屬性",
+                shape_rect: "矩形",
+                shape_i: "I型鋼",
+                shape_tri: "三角形",
+                shape_c: "C型鋼",
+                shape_circ: "實心圓",
+                shape_pipe: "圓管",
+                shape_tube: "方管",
+                diameter: "直徑 (d)",
+                thickness: "厚度 (t)",
+                custom: "自訂",
+                res_header_el: "單元",
+                res_header_m_max: "M_最大",
+                res_header_m_min: "M_最小",
+                res_header_v_max: "V_最大",
+                res_header_v_min: "V_最小",
+                res_header_n_max: "N_最大",
+                res_header_n_min: "N_最小",
+                res_header_d_max: "D_最大",
+                res_header_d_min: "D_最小",
+                sett_el: "單元設定",
+                sett_supp: "支承設定",
+                sett_load: "載重設定",
+                title: "WebFEA - 二維框架分析",
+                load_portal: "載入剛架範例",
+                load_truss: "載入桁架橋範例",
+                save: "儲存專案",
+                load: "載入專案",
+                clear: "清除全部",
+                nodes: "節點",
+                elements: "單元",
+                node_list: "節點列表",
+                member_list: "構件列表",
+                select_action: "選取操作",
+                node_sel: "節點選取",
+                beam_sel: "構件選取",
+                del_node_full: "刪除節點與支承",
+                del_supp_only: "僅移除支承",
+                del_sel: "刪除選取項",
+                conv_truss: "轉換為桁架單元 (二力桿)",
+                conv_rigid: "轉換為剛接構件",
+                attached_loads: "附加載重",
+                clear_loads: "清除載重",
+                no_supp: "無支承",
+                no_loads: "無載重",
+                tool_select: "選取",
+                tool_node: "新增節點",
+                tool_beam: "新增梁",
+                tool_supp: "新增支承",
+                tool_load: "新增載重",
+                tool_opt: "顯示選項",
+                toggle_theme: "切換主題",
+                toggle_lang: "切換語言",
+                sett: "設定",
+                el_type: "單元類型",
+                normal: "一般 (剛接)",
+                truss: "桁架 (鉸接)",
+                supp_type: "支承類型",
                 fixed: "固定端",
-                pin: "铰支座",
-                roller: "滚动支座",
+                pin: "鉸支承",
+                roller: "滾支承",
                 angle: "角度",
-                click_node: "点击节点应用",
-                assign_supp: "应用支座",
-                load_type: "荷载类型",
-                pt_node: "节点集中荷载",
-                pt_beam: "梁上集中荷载",
-                dist_load: "均布/梯形荷载",
-                supp_sett: "支座沉降",
-                click_beam_inst: "请点击画布上的梁",
-                click_node_inst: "请点击画布上的节点",
-                loads_active: "个荷载",
-                res_view: "结果视图",
-                def_shape: "变形图",
-                sfd: "剪力图 (SFD)",
-                bmd: "弯矩图 (BMD)",
-                afd: "轴力图 (AFD)",
-                show_react: "显示反力",
-                def_scale: "变形比例",
-                dia_scale: "图表比例",
+                click_node: "點擊節點以套用",
+                assign_supp: "指定支承",
+                load_type: "載重類型",
+                pt_node: "節點集中載重",
+                pt_beam: "梁上集中載重",
+                dist_load: "分佈載重",
+                supp_sett: "支承沉陷",
+                click_beam_inst: "請點擊畫布上的梁",
+                click_node_inst: "請點擊畫布上的節點",
+                loads_active: "個載重",
+                res_view: "結果視圖",
+                def_shape: "變形圖",
+                sfd: "剪力圖 (SFD)",
+                bmd: "彎矩圖 (BMD)",
+                afd: "軸力圖 (AFD)",
+                show_react: "顯示反力",
+                def_scale: "變形比例",
+                dia_scale: "圖表比例",
                 text_size: "文字大小",
-                global_ext: "全局极值",
-                max_m: "最大弯矩",
+                global_ext: "全局極值",
+                max_m: "最大彎矩",
                 max_v: "最大剪力",
-                max_a: "最大轴力",
+                max_a: "最大軸力",
                 max_d: "最大位移",
-                el_det: "单元",
-                moment: "弯矩",
+                el_det: "單元",
+                moment: "彎矩",
                 shear: "剪力",
-                axial: "轴力",
-                defl: "挠度",
+                axial: "軸力",
+                defl: "撓度",
                 min: "最小",
                 max: "最大",
-                conf_load: "配置荷载",
-                target: "目标",
+                conf_load: "設定載重",
+                target: "目標",
                 beam: "梁",
-                node: "节点",
+                node: "節點",
                 mag: "大小",
-                dist_start: "起始距离",
-                dist_end: "结束距离",
+                dist_start: "起始距離",
+                dist_end: "結束距離",
                 cancel: "取消",
-                apply: "应用荷载",
-                instr_zoom: "缩放: 滚轮 | 平移: 拖拽",
+                apply: "套用載重",
+                instr_zoom: "縮放: 滾輪 | 平移: 拖曳",
                 mode: "模式",
-                click_add: "点击添加",
-                click_start: "点击起点和终点",
-                select_items: "选择节点/单元",
-                undo: "撤销",
+                click_add: "點擊以新增",
+                click_start: "點擊起點與終點",
+                select_items: "選取節點/單元",
+                undo: "復原",
                 redo: "重做",
-                geo: "几何",
-                prop: "属性",
-                res: "结果",
-                new_prop: "新梁属性",
-                elastic: "弹性模量 (GPa)",
-                inertia: "惯性矩 (m4)",
-                area: "面积 (m2)",
-                dist: "距离",
-                ref: "参考系",
-                global: "全局",
+                geo: "幾何",
+                prop: "屬性",
+                res: "結果",
+                new_prop: "新梁屬性",
+                elastic: "彈性模數 (GPa)",
+                inertia: "慣性矩 (m4)",
+                area: "斷面積 (m2)",
+                dist: "距離",
+                ref: "參考座標",
+                global: "全域",
                 local: "局部",
-                // [ADD] New keys below
-                auto_solved: "自动求解完成",
-                el_col: "单元",
+                auto_solved: "自動求解完成",
+                el_col: "單元",
                 m_start: "M_起",
-                m_end: "M_终",
+                m_end: "M_終",
                 v_start: "V_起",
-                tab_geo: "几何",
-                tab_prop: "属性",
-                tab_loads: "荷载",
-                tab_res: "结果",
-                
-                // Loads Panel Specifics
-                select_load_type_lbl: "1. 选择荷载类型",
-                node_label: "节点:",
+                tab_geo: "幾何",
+                tab_prop: "屬性",
+                tab_loads: "載重",
+                tab_res: "結果",
+                select_load_type_lbl: "1. 選擇載重類型",
+                node_label: "節點:",
                 angle_deg: "角度 °",
-                click_to_apply: "在画布上点击节点以应用。",
-                loads_count: "个有效荷载",
+                click_to_apply: "在畫布上點擊節點以套用。",
+                loads_count: "個有效載重",
                 lbl_dx: "X方向位移 (m)",
                 lbl_dy: "Y方向位移 (m)",
-
-                // Ensure Toolbar Tooltips match
-                undo_tip: "撤销 (Ctrl+Z)",
+                undo_tip: "復原 (Ctrl+Z)",
                 redo_tip: "重做 (Ctrl+Y)",
-                toggle_theme_tip: "切换主题",
-                toggle_lang_tip: "切换语言"
+                toggle_theme_tip: "切換主題",
+                toggle_lang_tip: "切換語言",
+                el_info: "單元資訊",
+                sec_used: "斷面",
+                length: "長度 (m)",
+                self_wt: "自重 (kN/m)",
+                node_1: "節點 1",
+                node_2: "節點 2",
+                switch_sec: "切換斷面",
+                no_sec: "自訂",
+                // Results Tab
+                res_no_data: "新增節點與單元以查看結果",
+                res_elem_forces: "單元內力摘要",
+                res_node_disp: "節點位移",
+                res_support_react: "支承反力",
+                res_col_node: "節點",
+                res_col_dx: "Δx (mm)",
+                res_col_dy: "Δy (mm)",
+                res_col_theta: "θ (rad)",
+                res_col_rx: "Rx (kN)",
+                res_col_ry: "Ry (kN)",
+                res_col_rm: "Rm (kNm)",
             }
         };
         const Icon = React.memo(({ name, className }) => {
@@ -2104,12 +2250,36 @@
             const t = (key) => TRANSLATIONS[lang][key] || key;
             // Dynamic Classes for UI Elements
             const uiClasses = {
-                panel: isDarkMode ? "bg-slate-800/95 border-slate-600 text-slate-100" : "bg-white/95 border-slate-200 text-slate-800",
-                input: isDarkMode ? "bg-slate-700 border-slate-600 text-white" : "bg-slate-50 border-slate-300 text-slate-900",
-                buttonActive: "bg-blue-600 text-white shadow-lg",
-                buttonInactive: isDarkMode ? "text-slate-400 hover:bg-slate-700" : "text-slate-500 hover:bg-slate-100",
-                textMuted: isDarkMode ? "text-slate-400" : "text-slate-500",
-                canvasWrap: isDarkMode ? "bg-slate-900 text-slate-100" : "bg-slate-50 text-slate-900"
+                // Floating Panels & Toolbar
+                panel: isDarkMode 
+                    ? "bg-slate-800/95 border border-slate-700 text-slate-200 shadow-xl backdrop-blur-md" 
+                    : "bg-white/95 border border-gray-200 text-gray-700 shadow-xl backdrop-blur-md",
+                
+                // Sidebar specific (Full height, border right)
+                sidebar: isDarkMode
+                    ? "bg-slate-900/95 border-r border-slate-700 text-slate-200 backdrop-blur-md"
+                    : "bg-white/95 border-r border-gray-200 text-gray-800 backdrop-blur-md",
+
+                // Inner containers (like Node List, Tables)
+                innerPanel: isDarkMode
+                    ? "bg-slate-800 border border-slate-700"
+                    : "bg-gray-50 border border-gray-200",
+
+                // Inputs
+                input: isDarkMode 
+                    ? "bg-slate-900/50 border-slate-600 text-slate-200 placeholder-slate-500 focus:border-blue-500" 
+                    : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600",
+                
+                buttonActive: "bg-blue-600 text-white shadow-md hover:bg-blue-500",
+                
+                buttonInactive: isDarkMode 
+                    ? "text-slate-400 hover:bg-slate-700 hover:text-slate-100" 
+                    : "text-gray-500 hover:bg-gray-200 hover:text-gray-900",
+                
+                textMuted: isDarkMode ? "text-slate-500" : "text-gray-400",
+                textNorm: isDarkMode ? "text-slate-300" : "text-gray-600",
+                
+                canvasWrap: isDarkMode ? "bg-slate-950 text-slate-200" : "bg-gray-50 text-gray-800"
             };
             const [nodes, setNodes] = useState([]);
             const [elements, setElements] = useState([]);
@@ -2126,11 +2296,118 @@
             const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, defScale: 100, diaScale: 0.5 });
             const [activeTab, setActiveTab] = useState('geo');
             const [textSize, setTextSize] = useState(11);
-            
-            const [elemProp, setElemProp] = useState({ E: 200, I: 0.0001, A: 0.01, type: 'rigid' });
-            const [suppInput, setSuppInput] = useState({ nodeId: 0, type: 'fixed', angle: 0 });
-            const [loadType, setLoadType] = useState('point'); 
+
+            // [FIX] Add missing state variables
+            const [suppInput, setSuppInput] = useState({ type: 'fixed', angle: 0, nodeId: '' });
+            const [loadType, setLoadType] = useState('point');
             const [pendingLoad, setPendingLoad] = useState(null);
+            
+            const [elemProp, setElemProp] = useState({ E: 200e6, I: 0.0001, A: 0.01, type: 'rigid', selfWeight: 0 });
+            // [MODIFY] Section Library & Params
+            // Defaults: E is stored in kPa (200 GPa = 200,000,000 kPa)
+            const [sectionLibrary, setSectionLibrary] = useState([
+                { name: "Concrete Rect", type: 'rect', d: 500, b: 300, E: 30e9, A: 0.15, I: 0.003125 },
+                { name: "Steel I-Beam", type: 'i-shape', d: 400, b: 200, tw: 10, tf: 16, E: 200e9, A: 0.0101, I: 0.000277 },
+                { name: "Steel Pipe", type: 'hollow-circ', d: 200, t: 8, E: 200e9, A: 0.0048, I: 0.000022 }
+            ]);
+
+            const [secParams, setSecParams] = useState({ name: "", type: 'rect', d: 500, b: 300, tw: 10, tf: 16, t: 10 });
+
+            // [FIX] Auto-Calculate Properties (I, A) whenever Dimensions Change
+            useEffect(() => {
+                let I = 0, A = 0;
+                // Convert mm to meters for calculation
+                const d = (parseFloat(secParams.d) || 0) / 1000;
+                const b = (parseFloat(secParams.b) || 0) / 1000;
+                const tw = (parseFloat(secParams.tw) || 0) / 1000;
+                const tf = (parseFloat(secParams.tf) || 0) / 1000;
+                const t = (parseFloat(secParams.t) || 0) / 1000;
+
+                if (secParams.type === 'rect') {
+                    if (b > 0 && d > 0) {
+                        A = b * d;
+                        I = (b * Math.pow(d, 3)) / 12;
+                    }
+                } 
+                else if (secParams.type === 'tri') {
+                    if (b > 0 && d > 0) {
+                        A = (b * d) / 2;
+                        I = (b * Math.pow(d, 3)) / 36;
+                    }
+                }
+                else if (secParams.type === 'circ') {
+                    if (d > 0) {
+                        A = (Math.PI * Math.pow(d, 2)) / 4;
+                        I = (Math.PI * Math.pow(d, 4)) / 64;
+                    }
+                }
+                else if (secParams.type === 'hollow-circ') {
+                    if (d > 0 && t > 0) {
+                        const di = d - 2*t;
+                        if(di > 0) {
+                            A = (Math.PI * (Math.pow(d, 2) - Math.pow(di, 2))) / 4;
+                            I = (Math.PI * (Math.pow(d, 4) - Math.pow(di, 4))) / 64;
+                        }
+                    }
+                }
+                else if (secParams.type === 'hollow-rect') {
+                    if (b > 0 && d > 0 && t > 0) {
+                        const bi = b - 2*t;
+                        const di = d - 2*t;
+                        if(bi > 0 && di > 0) {
+                            A = (b*d) - (bi*di);
+                            I = ((b * Math.pow(d, 3)) - (bi * Math.pow(di, 3))) / 12;
+                        }
+                    }
+                }
+                else if (secParams.type === 'i-shape') {
+                    if (b > 0 && d > 0 && tw > 0 && tf > 0) {
+                        const innerH = d - 2 * tf;
+                        const innerB = b - tw;
+                        I = ((b * Math.pow(d, 3)) - (innerB * Math.pow(innerH, 3))) / 12;
+                        A = (2 * b * tf) + (innerH * tw);
+                    }
+                }
+                else if (secParams.type === 'c-shape') {
+                    if (b > 0 && d > 0 && tw > 0 && tf > 0) {
+                        const innerH = d - 2 * tf;
+                        const innerB = b - tw;
+                        I = ((b * Math.pow(d, 3)) - (innerB * Math.pow(innerH, 3))) / 12; 
+                        A = (2 * b * tf) + (innerH * tw);
+                    }
+                }
+                
+                // Update properties automatically
+                // We do NOT update E here, E is handled separately
+                if (A > 0 && I > 0) {
+                    setElemProp(prev => ({ 
+                        ...prev, 
+                        I: parseFloat(I.toPrecision(4)), 
+                        A: parseFloat(A.toPrecision(4)) 
+                    }));
+                }
+            }, [secParams]); // Dependencies: runs when secParams changes
+
+            // [MODIFY] Save Section (Includes E)
+            const saveSection = () => {
+                if (!secParams.name) return alert("Please enter a name");
+                const newSec = { ...secParams, E: elemProp.E, A: elemProp.A, I: elemProp.I };
+                setSectionLibrary(prev => [...prev, newSec]);
+                alert("Section Saved!");
+            };
+
+            // [MODIFY] Load Section
+            const loadSection = (index) => {
+                if (index === "") return;
+                const sec = sectionLibrary[index];
+                // 1. Update params (Dimension inputs) -> This triggers useEffect -> Updates I & A
+                setSecParams({ 
+                    name: sec.name, type: sec.type, 
+                    d: sec.d || 0, b: sec.b || 0, tw: sec.tw || 0, tf: sec.tf || 0, t: sec.t || 0 
+                });
+                // 2. Update E explicitly
+                setElemProp(prev => ({ ...prev, E: sec.E }));
+            };
             
             // [ADD] State for Display Options Toggle
             const [showDisplayMenu, setShowDisplayMenu] = useState(false);
@@ -2212,9 +2489,10 @@
                             addToHistory(); // <--- ADD THIS
                             setElements(prev => [...prev, { 
                                 id: prev.length + 1, n1: selectedNode, n2: nodeId, 
-                                E: elemProp.E * 1e6, I: elemProp.I, A: elemProp.A,
-                                type: elemProp.type 
-                            }]);
+                                E: elemProp.E, I: elemProp.I, A: elemProp.A,
+                                type: elemProp.type,
+                                selfWeight: elemProp.selfWeight || 0
+                            }]);  
                             setSelectedNode(null);
                         }
                     } else setSelectedNode(null);
@@ -2372,9 +2650,9 @@
             const loadDemo = () => {
                 setNodes([{x:0, y:0}, {x:0, y:4}, {x:5, y:4}, {x:5, y:0}]);
                 setElements([
-                    {id:1, n1:0, n2:1, E:200e6, I:0.0002, A:0.01, type:'rigid'}, 
-                    {id:2, n1:1, n2:2, E:200e6, I:0.0002, A:0.01, type:'rigid'}, 
-                    {id:3, n1:2, n2:3, E:200e6, I:0.0002, A:0.01, type:'rigid'}
+                    {id:1, n1:0, n2:1, E:200e9, I:0.0002, A:0.01, type:'rigid', selfWeight:0},
+                    {id:2, n1:1, n2:2, E:200e9, I:0.0002, A:0.01, type:'rigid', selfWeight:0},
+                    {id:3, n1:2, n2:3, E:200e9, I:0.0002, A:0.01, type:'rigid', selfWeight:0}
                 ]);
                 setSupports([{nodeId:0, rx:true, ry:true, rm:true}, {nodeId:3, rx:true, ry:true, rm:true}]);
                 
@@ -2396,7 +2674,7 @@
                     {x:w/2, y:h}, {x:1.5*w, y:h}, {x:2.5*w, y:h}, {x:3.5*w, y:h}      // Top Chord: 5,6,7,8
                 ]);
                 
-                const defaults = { E:200e6, I:0.0001, A:0.005, type:'truss' };
+                const defaults = { E:200e9, I:0.0001, A:0.005, type:'truss', selfWeight:0 };
                 
                 setElements([
                     // Bottom Chord
@@ -2510,7 +2788,93 @@
                 setLoads(prev => [...prev, loadData]);
                 setPendingLoad(null); // Close modal
             };
+            // [ADD] Calculate Element Stats for Table
+            const elementStats = useMemo(() => {
+                if (!results || !elements.length) return [];
 
+                return elements.map(el => {
+                    const res = results.memberForces.find(f => f.id === el.id);
+                    if (!res) return { id: el.id, mMax: 0, mMin: 0, vMax: 0, vMin: 0, nMax: 0, nMin: 0, dMax: 0, dMin: 0 };
+
+                    const n1 = nodes[el.n1], n2 = nodes[el.n2];
+                    const dx = n2.x - n1.x, dy = n2.y - n1.y;
+                    const L = Math.sqrt(dx*dx + dy*dy);
+                    
+                    let mMax = -Infinity, mMin = Infinity;
+                    let vMax = -Infinity, vMin = Infinity;
+                    let nMax = -Infinity, nMin = Infinity;
+                    let dMax = -Infinity, dMin = Infinity;
+
+                    // Integrator Loop (20 steps per beam)
+                    const steps = 20;
+                    for (let i = 0; i <= steps; i++) {
+                        const x = (i / steps) * L;
+                        
+                        // 1. Internal Forces from Reactions
+                        let Mx = -res.moment1 + res.shearStart * x;
+                        let Vx = res.shearStart;
+                        let Ax = res.axial;
+
+                        // 2. Add Loads
+                        const elLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
+                        elLoads.forEach(l => {
+                            const rawAng = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
+                            const beamAng = Math.atan2(dy, dx);
+                            let effectiveAng = rawAng;
+                            if (l.angleRef === 'local') effectiveAng = beamAng + rawAng;
+                            const relAng = effectiveAng - beamAng;
+
+                            if (l.type === 'point_span') {
+                                let dist = parseFloat(l.dist !== undefined ? l.dist : L/2);
+                                if (x > dist) {
+                                    const mag = parseFloat(l.mag || 0);
+                                    const Px = mag * Math.cos(relAng);
+                                    const Py = mag * Math.sin(relAng);
+                                    Vx += Py; Ax += Px; Mx += Py * (x - dist);
+                                }
+                            } else if (l.type === 'dist') {
+                                const d1 = parseFloat(l.dStart || 0);
+                                const d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : L);
+                                const start = Math.max(d1, 0), end = Math.min(d2, x);
+                                if (end > start) {
+                                    const len = end - start;
+                                    const wStart = parseFloat(l.wStart || 0);
+                                    const wEnd = parseFloat(l.wEnd !== undefined ? l.wEnd : wStart);
+                                    const fullLen = d2 - d1;
+                                    const w_s = wStart + (wEnd - wStart) * ((start - d1) / fullLen);
+                                    const w_e = wStart + (wEnd - wStart) * ((end - d1) / fullLen);
+                                    const area = (w_s + w_e) * 0.5 * len;
+                                    const cent = (len * (w_s + 2*w_e)) / (3 * (w_s + w_e));
+                                    const cDist = (x - start) - cent;
+                                    
+                                    const Wx = area * Math.cos(relAng);
+                                    const Wy = area * Math.sin(relAng);
+                                    Vx += Wy; Ax += Wx; Mx += Wy * cDist;
+                                }
+                            }
+                        });
+
+                        // 3. Displacement Approx (Hermite)
+                        const t = x / L;
+                        const h1 = 1 - 3*t*t + 2*t*t*t;
+                        const h2 = x * (1 - 2*t + t*t);
+                        const h3 = 3*t*t - 2*t*t*t;
+                        const h4 = x * (t*t - t);
+                        const disp = res.dispLocal[1]*h1 + res.dispLocal[2]*h2 + res.dispLocal[4]*h3 + res.dispLocal[5]*h4;
+
+                        if (Mx > mMax) mMax = Mx; if (Mx < mMin) mMin = Mx;
+                        if (Vx > vMax) vMax = Vx; if (Vx < vMin) vMin = Vx;
+                        if (Ax > nMax) nMax = Ax; if (Ax < nMin) nMin = Ax;
+                        if (disp > dMax) dMax = disp; if (disp < dMin) dMin = disp;
+                    }
+
+                    return { 
+                        id: el.id, 
+                        mMax, mMin, vMax, vMin, nMax, nMin, 
+                        dMax: dMax * 1000, dMin: dMin * 1000 // Convert m to mm for display
+                    };
+                });
+            }, [results, elements, nodes, loads]);
             return (
                 <div className="relative h-screen w-screen bg-slate-900 text-slate-100 font-sans overflow-hidden">
                     
@@ -2518,9 +2882,13 @@
                     <div className="absolute top-4 left-4 z-50">
                         <button 
                             onClick={() => setSidebarOpen(!sidebarOpen)} 
-                            className="bg-slate-800/90 backdrop-blur border border-slate-600 p-3 rounded-full shadow-xl text-blue-400 hover:bg-slate-700 transition-colors"
+                            className={`p-3 rounded-full shadow-xl border transition-all ${
+                                isDarkMode 
+                                ? "bg-slate-800/90 border-slate-700 text-blue-400 hover:bg-slate-700" 
+                                : "bg-white/90 border-gray-200 text-blue-600 hover:bg-gray-50"
+                            }`}
                         >
-                            <Icon name="more-vertical" className="w-6 h-6" />
+                            <Icon name="more-vertical" className="w-5 h-5" />
                         </button>
                     </div>
 
@@ -2569,9 +2937,13 @@
                         </div>
 
                         {/* Toolbar */}
-                        <div className="bg-slate-800/90 backdrop-blur border border-slate-600 p-2 rounded-2xl shadow-xl flex flex-col gap-2">
+                        <div className={`${uiClasses.panel} p-2 rounded-2xl flex flex-col gap-2`}>
                             {/* Theme & Language Toggles */}
+                            
                             <div className="flex gap-2">
+                                <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-3 rounded-xl transition-all flex-1 ${uiClasses.buttonInactive}`} title={t('toggle_theme_tip')}>
+                                    <Icon name={isDarkMode ? "sun" : "moon"} className="w-5 h-5 mx-auto" />
+                                </button>
                                 <button onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')} className={`p-3 rounded-xl transition-all flex-1 font-bold text-xs ${uiClasses.buttonInactive}`} title={t('toggle_lang')}>
                                     {lang === 'en' ? '中' : 'EN'}
                                 </button>
@@ -2770,32 +3142,40 @@
                         </div>
                     )}
                     {/* [MODIFY] 3. Sidebar - Collapsible with Slide Transition */}
-                    <div className={`absolute top-0 left-0 h-full w-80 bg-slate-900/95 backdrop-blur-md border-r border-slate-700 flex flex-col z-40 shadow-2xl transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-                        
+                    <div className={`absolute top-0 left-0 h-full w-80 flex flex-col z-40 shadow-2xl transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} ${uiClasses.sidebar}`}>
+
                         {/* Header with Close Button */}
-                        <div className="p-4 border-b border-slate-700 flex justify-between items-center">
-                            <h1 className="text-xl font-bold flex items-center gap-2 text-blue-400"><Icon name="activity" className="w-5 h-5" /> WebFEA</h1>
-                            <button onClick={() => setSidebarOpen(false)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-5 h-5" /></button>
+                        <div className={`p-4 border-b flex justify-between items-center ${isDarkMode ? 'border-slate-700' : 'border-gray-200'}`}>
+                            <h1 className="text-xl font-bold flex items-center gap-2 text-blue-600"><Icon name="activity" className="w-5 h-5" /> WebFEA</h1>
+                            <button onClick={() => setSidebarOpen(false)} className={isDarkMode ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"}><Icon name="x" className="w-5 h-5" /></button>
                         </div>
 
                         <div className="flex-1 overflow-y-auto p-4 space-y-6">
                             {/* Project File Management */}
-                            <div className="grid grid-cols-2 gap-3 pb-2 border-b border-slate-700/50">
-                                <button onClick={saveProject} className="bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded-lg text-slate-200 border border-slate-600 font-bold transition-colors flex items-center justify-center gap-2">
-                                    <Icon name="save" className="w-4 h-4" />
-                                {t('save')}</button>
-                                <button onClick={triggerLoad} className="bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded-lg text-slate-200 border border-slate-600 font-bold transition-colors flex items-center justify-center gap-2">
-                                    <Icon name="folder-open" className="w-4 h-4" />
-                                {t('load')}</button>
-                                {/* Hidden Input for File Loading */}
+                            <div className={`grid grid-cols-2 gap-3 pb-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-gray-200'}`}>
+                                <button onClick={saveProject} className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold border shadow-sm transition-all ${
+                                    isDarkMode 
+                                    ? "bg-slate-800 border-slate-600 text-blue-400 hover:bg-slate-700" 
+                                    : "bg-white border-gray-300 text-blue-600 hover:bg-gray-50"
+                                }`}>
+                                    <Icon name="save" className="w-4 h-4" /> {t('save')}
+                                </button>
+                                <button onClick={triggerLoad} className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold border shadow-sm transition-all ${
+                                    isDarkMode 
+                                    ? "bg-slate-800 border-slate-600 text-emerald-400 hover:bg-slate-700" 
+                                    : "bg-white border-gray-300 text-emerald-600 hover:bg-gray-50"
+                                }`}>
+                                    <Icon name="folder-open" className="w-4 h-4" /> {t('load')}
+                                </button>
                                 <input type="file" ref={fileInputRef} onChange={handleFileLoad} className="hidden" accept=".json" />
                             </div>
-                            {/* [DELETE] Removed the 'Tools' div from here as it is now floating top-right */}
                             
-                            <button onClick={loadDemo} className="w-full bg-slate-800 hover:bg-slate-700 text-xs py-3 rounded-lg text-slate-300 border border-slate-600 font-medium transition-colors">
-                            {t('load_portal')}</button>
-                            <button onClick={loadTrussDemo} className="w-full bg-slate-800 hover:bg-slate-700 text-xs py-3 rounded-lg text-slate-300 border border-slate-600 font-medium transition-colors">
-                            {t('load_truss')}</button>
+                            <button onClick={loadDemo} className={`w-full text-xs py-3 rounded-lg font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600' : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 shadow-sm'}`}>
+                                {t('load_portal')}
+                            </button>
+                            <button onClick={loadTrussDemo} className={`w-full text-xs py-3 rounded-lg font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600' : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 shadow-sm'}`}>
+                                {t('load_truss')}
+                            </button>
                             {/* ... (Keep existing Selection Actions Panel logic exactly as it was) ... */}
                             {(selectedNode !== null || selectedElement !== null) && (
                                 <div className="bg-slate-700 p-2 rounded border border-slate-600 shadow-sm">
@@ -2864,15 +3244,85 @@
                                                 <button onClick={() => setSelectedElement(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
                                             </div>
                                             
-                                            <div className="grid grid-cols-1 gap-2">
-                                                {/* ADDED: Toggle Type Button */}
+                                            {/* Element Info Display */}
+                                            {(() => {
+                                                const el = elements.find(e => e.id === selectedElement);
+                                                if (!el) return null;
+                                                
+                                                const n1 = nodes[el.n1];
+                                                const n2 = nodes[el.n2];
+                                                const L = Math.sqrt(Math.pow(n2.x - n1.x, 2) + Math.pow(n2.y - n1.y, 2));
+                                                
+                                                // Find matching section from library
+                                                const matchedSec = sectionLibrary.find(sec => 
+                                                    Math.abs(sec.E - el.E) < 1e3 && 
+                                                    Math.abs(sec.I - el.I) < 1e-8 && 
+                                                    Math.abs(sec.A - el.A) < 1e-6
+                                                );
+                                                
+                                                return (
+                                                    <div className="mt-2 p-2 bg-slate-900/50 rounded border border-slate-700 text-[10px] space-y-1">
+                                                        <div className="font-bold text-blue-300 mb-2 border-b border-slate-700 pb-1">{t('el_info')}</div>
+                                                        
+                                                        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                                                            <span className="text-slate-400">{t('sec_used')}:</span>
+                                                            <span className="text-slate-200 font-mono">{matchedSec ? matchedSec.name : t('no_sec')}</span>
+                                                            
+                                                            <span className="text-slate-400">{t('area')}:</span>
+                                                            <span className="text-slate-200 font-mono">{el.A.toExponential(2)} m²</span>
+                                                            
+                                                            <span className="text-slate-400">{t('inertia')}:</span>
+                                                            <span className="text-slate-200 font-mono">{el.I.toExponential(2)} m⁴</span>
+                                                            
+                                                            <span className="text-slate-400">{t('elastic')}:</span>
+                                                            <span className="text-slate-200 font-mono">{(el.E / 1e9).toFixed(0)} GPa</span>
+                                                            
+                                                            <span className="text-slate-400">{t('length')}:</span>
+                                                            <span className="text-slate-200 font-mono">{L.toFixed(3)} m</span>
+                                                            
+                                                            <span className="text-slate-400">{t('self_wt')}:</span>
+                                                            <span className="text-slate-200 font-mono">{el.selfWeight || 0} kN/m</span>
+                                                            
+                                                            <span className="text-slate-400">{t('node_1')}:</span>
+                                                            <span className="text-slate-200 font-mono">{el.n1}</span>
+                                                            
+                                                            <span className="text-slate-400">{t('node_2')}:</span>
+                                                            <span className="text-slate-200 font-mono">{el.n2}</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+                                            
+                                            <div className="grid grid-cols-1 gap-2 mt-2">
+                                                {/* Switch Section Dropdown */}
+                                                <select 
+                                                    className={`w-full rounded px-2 py-1 text-[10px] border ${uiClasses.input}`}
+                                                    onChange={(e) => {
+                                                        if (e.target.value === "") return;
+                                                        addToHistory();
+                                                        const sec = sectionLibrary[parseInt(e.target.value)];
+                                                        setElements(prev => prev.map(el => 
+                                                            el.id === selectedElement 
+                                                            ? { ...el, E: sec.E, I: sec.I, A: sec.A }
+                                                            : el
+                                                        ));
+                                                        e.target.value = ""; // Reset dropdown
+                                                    }}
+                                                    defaultValue=""
+                                                >
+                                                    <option value="">{t('switch_sec')}</option>
+                                                    {sectionLibrary.map((sec, i) => (
+                                                        <option key={i} value={i}>{sec.name}</option>
+                                                    ))}
+                                                </select>
+                                                
+                                                {/* Toggle Type Button */}
                                                 <button onClick={() => { 
-                                                    addToHistory(); // <--- ADD THIS
+                                                    addToHistory();
                                                     setElements(prev => prev.map(e => e.id === selectedElement ? { ...e, type: e.type === 'truss' ? 'rigid' : 'truss' } : e));
                                                 }} className="bg-slate-600 hover:bg-slate-500 text-white text-[10px] py-1 rounded">
-                                                    Convert to {elements.find(e => e.id === selectedElement)?.type === 'truss' ? 'Normal Frame' : 'Truss Element'}
+                                                    {t(elements.find(e => e.id === selectedElement)?.type === 'truss' ? 'conv_rigid' : 'conv_truss')}
                                                 </button>
-                                                
                                             </div>
                                         </>
                                     )}
@@ -2883,148 +3333,330 @@
 
                             {/* ... (Keep existing Tabs and Tab Content logic exactly as it was) ... */}
                             <div className="flex gap-2 border-b border-slate-700 pb-2">
-                                {['geo', 'prop', 'load', 'res'].map(tab => (
-                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`text-xs px-2 py-1 rounded ${activeTab===tab ? 'bg-blue-600' : 'text-slate-400'}`}>
-                                        {tab === 'geo' ? t('tab_geo') : tab === 'prop' ? t('tab_prop') : tab === 'load' ? t('tab_loads') : t('tab_res')}
+                                {/* Removed 'load' from the array */}
+                                {['geo', 'prop', 'res'].map(tab => (
+                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`text-xs px-2 py-1 rounded font-medium transition-colors ${activeTab===tab ? 'bg-blue-600 text-white' : `${uiClasses.textMuted} hover:bg-gray-100/10`}`}>
+                                        {/* Logic simplified since 'load' is gone */}
+                                        {tab === 'geo' ? t('tab_geo') : tab === 'prop' ? t('tab_prop') : t('tab_res')}
                                     </button>
                                 ))}
                             </div>
 
                             {activeTab === 'geo' && (
-                                <div className="space-y-4 text-xs text-slate-400">
+                                <div className={`space-y-4 text-xs ${uiClasses.textMuted}`}>
                                     <p>{t('nodes')}: {nodes.length} | {t('elements')}: {elements.length}</p>
-                                    <div className="bg-slate-800 p-2 rounded max-h-40 overflow-y-auto">
-                                        <div className="font-bold mb-1">{t('node_list')}</div>
-                                        {nodes.map((n,i) => <div key={i} className="flex justify-between border-b border-slate-700 py-1"><span>{i}</span><span>{n.x.toFixed(1)}, {n.y.toFixed(1)}</span></div>)}
+                                    
+                                    {/* Node List */}
+                                    <div className={`${uiClasses.innerPanel} p-2 rounded max-h-40 overflow-y-auto`}>
+                                        <div className={`font-bold mb-1 ${isDarkMode ? 'text-slate-200' : 'text-gray-700'}`}>{t('node_list')}</div>
+                                        {nodes.map((n,i) => (
+                                            <div key={i} className={`flex justify-between border-b py-1 ${isDarkMode ? 'border-slate-700' : 'border-gray-200 text-gray-600'}`}>
+                                                <span>{i}</span><span>{n.x.toFixed(1)}, {n.y.toFixed(1)}</span>
+                                            </div>
+                                        ))}
                                     </div>
-                                    <div className="bg-slate-800 p-2 rounded max-h-40 overflow-y-auto">
-                                        <div className="font-bold mb-1">{t('member_list')}</div>
-                                        {elements.map((e,i) => <div key={i} className="flex justify-between border-b border-slate-700 py-1"><span>{e.id}</span><span>{e.n1} → {e.n2}</span></div>)}
+
+                                    {/* Member List */}
+                                    <div className={`${uiClasses.innerPanel} p-2 rounded max-h-40 overflow-y-auto`}>
+                                        <div className={`font-bold mb-1 ${isDarkMode ? 'text-slate-200' : 'text-gray-700'}`}>{t('member_list')}</div>
+                                        {elements.map((e,i) => (
+                                            <div key={i} className={`flex justify-between border-b py-1 ${isDarkMode ? 'border-slate-700' : 'border-gray-200 text-gray-600'}`}>
+                                                <span>{e.id}</span><span>{e.n1} → {e.n2}</span>
+                                            </div>
+                                        ))}
                                     </div>
+                                    
                                     <button onClick={()=>{setNodes([]); setElements([]); setSupports([]); setLoads([]); setResults(null);}} className="w-full bg-red-900/50 hover:bg-red-900 text-red-200 py-1 rounded">{t('clear')}</button>
                                 </div>
                             )}
+                            {activeTab === 'res' && (
+                                <div className="space-y-4">
+                                    {!results ? (
+                                        <div className={`${uiClasses.innerPanel} p-4 rounded text-center`}>
+                                            <Icon name="info" className="w-8 h-8 mx-auto mb-2 text-slate-500" />
+                                            <p className={`text-xs ${uiClasses.textMuted}`}>
+                                                {error || t('res_no_data')}
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {/* Element Forces Summary Table */}
+                                            <div className={`${uiClasses.innerPanel} p-0 rounded overflow-hidden`}>
+                                                <div className={`p-2 font-bold text-xs border-b ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-gray-100 border-gray-200 text-gray-700'}`}>
+                                                    {t('res_elem_forces')}
+                                                </div>
+                                                <div className="max-h-64 overflow-y-auto">
+                                                    <table className="w-full text-left border-collapse">
+                                                        <thead className={`text-[9px] sticky top-0 ${isDarkMode ? 'bg-slate-800' : 'bg-gray-100'} ${uiClasses.textMuted}`}>
+                                                            <tr>
+                                                                <th className="p-1.5 font-normal">{t('res_header_el')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_header_m_max')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_header_m_min')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_header_v_max')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_header_v_min')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_header_n_max')}</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className={`text-[9px] font-mono ${isDarkMode ? 'text-slate-400' : 'text-gray-600'}`}>
+                                                            {elementStats.map((stat) => (
+                                                                <tr key={stat.id} className={`border-b last:border-0 hover:bg-blue-500/10 cursor-pointer ${isDarkMode ? 'border-slate-800' : 'border-gray-100'}`}
+                                                                    onClick={() => { setSelectedElement(stat.id); setTool('pointer'); }}>
+                                                                    <td className="p-1.5 font-bold text-blue-400">{stat.id}</td>
+                                                                    <td className="p-1.5 text-right text-red-400">{stat.mMax.toFixed(2)}</td>
+                                                                    <td className="p-1.5 text-right text-red-300">{stat.mMin.toFixed(2)}</td>
+                                                                    <td className="p-1.5 text-right text-blue-400">{stat.vMax.toFixed(2)}</td>
+                                                                    <td className="p-1.5 text-right text-blue-300">{stat.vMin.toFixed(2)}</td>
+                                                                    <td className="p-1.5 text-right text-pink-400">{stat.nMax.toFixed(2)}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
 
+                                            {/* Node Displacements */}
+                                            <div className={`${uiClasses.innerPanel} p-0 rounded overflow-hidden`}>
+                                                <div className={`p-2 font-bold text-xs border-b ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-gray-100 border-gray-200 text-gray-700'}`}>
+                                                    {t('res_node_disp')}
+                                                </div>
+                                                <div className="max-h-48 overflow-y-auto">
+                                                    <table className="w-full text-left border-collapse">
+                                                        <thead className={`text-[9px] sticky top-0 ${isDarkMode ? 'bg-slate-800' : 'bg-gray-100'} ${uiClasses.textMuted}`}>
+                                                            <tr>
+                                                                <th className="p-1.5 font-normal">{t('res_col_node')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_col_dx')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_col_dy')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_col_theta')}</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className={`text-[9px] font-mono ${isDarkMode ? 'text-slate-400' : 'text-gray-600'}`}>
+                                                            {nodes.map((_, i) => {
+                                                                const dx = results.displacements[3*i] * 1000; // Convert to mm
+                                                                const dy = results.displacements[3*i+1] * 1000;
+                                                                const theta = results.displacements[3*i+2];
+                                                                return (
+                                                                    <tr key={i} className={`border-b last:border-0 hover:bg-blue-500/10 ${isDarkMode ? 'border-slate-800' : 'border-gray-100'}`}>
+                                                                        <td className="p-1.5 font-bold text-blue-400">{i}</td>
+                                                                        <td className="p-1.5 text-right">{dx.toFixed(3)}</td>
+                                                                        <td className="p-1.5 text-right">{dy.toFixed(3)}</td>
+                                                                        <td className="p-1.5 text-right">{theta.toExponential(2)}</td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+
+                                            {/* Support Reactions */}
+                                            {supports.length > 0 && (
+                                                <div className={`${uiClasses.innerPanel} p-0 rounded overflow-hidden`}>
+                                                    <div className={`p-2 font-bold text-xs border-b ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-gray-100 border-gray-200 text-gray-700'}`}>
+                                                        {t('res_support_react')}
+                                                    </div>
+                                                    <div className="max-h-48 overflow-y-auto">
+                                                        <table className="w-full text-left border-collapse">
+                                                            <thead className={`text-[9px] sticky top-0 ${isDarkMode ? 'bg-slate-800' : 'bg-gray-100'} ${uiClasses.textMuted}`}>
+                                                                <tr>
+                                                                    <th className="p-1.5 font-normal">{t('res_col_node')}</th>
+                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_rx')}</th>
+                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_ry')}</th>
+                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_rm')}</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className={`text-[9px] font-mono ${isDarkMode ? 'text-slate-400' : 'text-gray-600'}`}>
+                                                                {supports.map((sup) => {
+                                                                    const rx = results.reactions[3*sup.nodeId];
+                                                                    const ry = results.reactions[3*sup.nodeId+1];
+                                                                    const rm = results.reactions[3*sup.nodeId+2];
+                                                                    return (
+                                                                        <tr key={sup.nodeId} className={`border-b last:border-0 ${isDarkMode ? 'border-slate-800' : 'border-gray-100'}`}>
+                                                                            <td className="p-1.5 font-bold text-emerald-400">{sup.nodeId}</td>
+                                                                            <td className="p-1.5 text-right text-red-400">{Math.abs(rx).toFixed(2)}</td>
+                                                                            <td className="p-1.5 text-right text-red-400">{Math.abs(ry).toFixed(2)}</td>
+                                                                            <td className="p-1.5 text-right text-red-400">{Math.abs(rm).toFixed(2)}</td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            )}
                             {activeTab === 'prop' && (
                                 <div className="space-y-4">
-                                    <div className="bg-slate-800 p-3 rounded">
-                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">{t('new_prop')}</h3>
-                                        <div className="flex bg-slate-900 p-1 rounded mb-2">
-                                            <button onClick={()=>setElemProp({...elemProp, type:'rigid'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='rigid'?'bg-blue-600 text-white':'text-slate-500 hover:text-slate-300'}`}>{t('normal')}</button>
-                                            <button onClick={()=>setElemProp({...elemProp, type:'truss'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='truss'?'bg-blue-600 text-white':'text-slate-500 hover:text-slate-300'}`}>{t('truss')}</button>
-                                        </div>
-                                        <div className="space-y-2 mb-2">
-                                            <label className="text-xs text-slate-500">{t('elastic')}</label>
-                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={elemProp.E} onChange={e=>setElemProp({...elemProp, E:e.target.value})} />
-                                            <label className="text-xs text-slate-500">{t('inertia')}</label>
-                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={elemProp.I} onChange={e=>setElemProp({...elemProp, I:e.target.value})} />
-                                            <label className="text-xs text-slate-500">{t('area')}</label>
-                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={elemProp.A} onChange={e=>setElemProp({...elemProp, A:e.target.value})} />
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
+                                    <div className={`${uiClasses.innerPanel} p-3 rounded`}>
+                                        <h3 className={`text-xs font-bold mb-3 uppercase ${uiClasses.textMuted}`}>{t('new_prop')}</h3>
 
-                            {activeTab === 'load' && (
-                                <div className="space-y-4">
-                                    {/* SUPPORT PANEL */}
-                                    <div className={`bg-slate-800 p-3 rounded ${tool === 'support' ? 'ring-2 ring-blue-500' : ''}`}>
-                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">{t('tool_supp')}</h3>
-                                        
-                                        <label className="text-[10px] text-slate-500 block mb-1">{t('supp_type')}</label>
-                                        <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-lg mb-2">
-                                            {['fixed', 'pin', 'roller'].map(type => (
-                                                <button key={type} onClick={()=>setSuppInput(p=>({...p, type}))} 
-                                                    className={`text-[10px] py-1.5 rounded-md capitalize transition-colors ${suppInput.type===type ? 'bg-emerald-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>
-                                                    {t(type)}
-                                                </button>
-                                            ))}
-                                        </div>
+                                        <div className={`w-full h-px my-3 ${isDarkMode ? 'bg-slate-700' : 'bg-gray-200'}`}></div>
 
-                                        <div className="flex items-center gap-2 mb-2">
-                                            {/* Angle Input */}
-                                            <input type="number" placeholder={t('angle_deg')} className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={suppInput.angle} onChange={e=>setSuppInput({...suppInput, angle:e.target.value})} />
-                                        </div>
-                                        
-                                        {tool !== 'support' && (
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <span className="text-xs text-slate-500">{t('node_label')}</span>
-                                                <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={suppInput.nodeId} onChange={e=>setSuppInput({...suppInput, nodeId:e.target.value})} />
-                                            </div>
-                                        )}
-                                        
-                                        {tool === 'support' && <div className="text-xs text-blue-400 mb-2">{t('click_to_apply')}</div>}
-                                        
-                                        <button onClick={() => addSupport()} className="w-full bg-emerald-600 hover:bg-emerald-500 py-1 rounded text-xs text-white font-bold">{t('assign_supp')}</button>
-                                    </div>
-
-                                    {/* LOAD PANEL */}
-                                    <div className={`bg-slate-800 p-3 rounded ${tool === 'load' ? 'ring-2 ring-blue-500' : ''}`}>
-                                        <h3 className="text-xs font-bold text-slate-400 mb-2 uppercase">{t('tool_load')}</h3>
-                                        
+                                        {/* 2. GEOMETRY INPUTS */}
                                         <div className="mb-3">
-                                            <label className="text-xs text-slate-500 block mb-1">{t('select_load_type_lbl')}</label>
-                                            <select className={`w-full rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 border ${uiClasses.input}`} value={loadType} onChange={e=>setLoadType(e.target.value)}>
-                                                <option value="point">{t('pt_node')}</option>
-                                                <option value="point_span">{t('pt_beam')}</option>
-                                                <option value="dist">{t('dist_load')}</option>
-                                                <option value="settlement">{t('supp_sett')}</option>
-                                            </select>
-                                        </div>
-
-                                        <div className="text-xs text-slate-400 p-2 bg-slate-900 rounded border border-slate-700">
-                                            {(loadType === 'dist' || loadType === 'point_span') 
-                                                ? t('click_beam_inst') 
-                                                : t('click_node_inst')}
-                                        </div>
-                                        
-                                        <div className="mt-3 text-xs text-slate-500 border-t border-slate-700 pt-2">
-                                            {loads.length} {t('loads_count')}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'res' && results && (
-                                <div className="space-y-4 text-xs">
-                                     <div className="bg-slate-800 p-3 rounded">
-                                        <h3 className="font-bold text-slate-400 mb-2 uppercase">{t('tool_opt')}</h3>
-                                        <div className="flex flex-col gap-2">
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showDeformed} onChange={e=>setViewSettings({...viewSettings, showDeformed:e.target.checked})} /> {t('def_shape')}</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showSFD} onChange={e=>setViewSettings({...viewSettings, showSFD:e.target.checked})} /> {t('sfd')}</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showBMD} onChange={e=>setViewSettings({...viewSettings, showBMD:e.target.checked})} /> {t('bmd')}</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showAFD} onChange={e=>setViewSettings({...viewSettings, showAFD:e.target.checked})} /> {t('afd')}</label>
-                                            <label className="flex items-center gap-2"><input type="checkbox" checked={viewSettings.showReactions} onChange={e=>setViewSettings({...viewSettings, showReactions:e.target.checked})} /> {t('show_react')}</label>
-                                            <div className="mt-2"><label>{t('def_scale')}</label><input type="range" min="1" max="500" value={viewSettings.defScale} onChange={e=>setViewSettings({...viewSettings, defScale:Number(e.target.value)})} className="w-full"/></div>
-                                            <div><label>{t('dia_scale')}</label><input type="range" min="0.1" max="5" step="0.1" value={viewSettings.diaScale} onChange={e=>setViewSettings({...viewSettings, diaScale:Number(e.target.value)})} className="w-full"/></div>
-                                        </div>
-                                        <div className="flex justify-between items-center mt-2 border-t border-slate-700 pt-2">
-                                            <label className="text-xs text-slate-400">{t('text_size')}</label>
-                                            {/* ... existing font buttons ... */}
-                                        </div>
-                                    </div>
-                                    <div className="bg-slate-800 p-3 rounded max-h-60 overflow-y-auto">
-                                        <table className="w-full text-left border-collapse">
-                                            <thead><tr className="text-slate-500 border-b border-slate-600"><th className="py-1">{t('el_col')}</th><th>{t('m_start')}</th><th>{t('m_end')}</th><th>{t('v_start')}</th></tr></thead>
-                                            <tbody>
-                                                {/* ... existing table body ... */}
-                                                {results.memberForces.map(mf => (
-                                                    <tr key={mf.id} className="border-b border-slate-700/50 font-mono">
-                                                        <td className="py-1">{mf.id}</td>
-                                                        <td className="text-slate-300">{mf.moment1.toFixed(1)}</td>
-                                                        <td className="text-slate-300">{mf.moment2.toFixed(1)}</td>
-                                                        <td className="text-slate-300">{mf.shearStart ? mf.shearStart.toFixed(1) : '0.0'}</td>
-                                                    </tr>
+                                            {/* [FIX] Shape Selector Button Group + Translation */}
+                                            <label className={`text-[10px] font-bold block mb-1.5 ${uiClasses.textMuted}`}>{t('shape')}</label>
+                                            <div className="grid grid-cols-4 gap-1 mb-3">
+                                                {['rect', 'hollow-rect', 'circ', 'hollow-circ', 'i-shape', 'c-shape', 'tri'].map(type => (
+                                                    <button 
+                                                        key={type} 
+                                                        onClick={() => setSecParams(s => ({...s, type}))}
+                                                        className={`text-[9px] py-1 px-0.5 rounded border transition-all truncate ${
+                                                            secParams.type === type 
+                                                            ? 'bg-blue-600 border-blue-500 text-white shadow-sm' 
+                                                            : isDarkMode 
+                                                                ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200' 
+                                                                : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                                                        }`}
+                                                        title={t(type === 'hollow-rect' ? 'shape_tube' : type === 'hollow-circ' ? 'shape_pipe' : `shape_${type.split('-')[0]}`)}
+                                                    >
+                                                        {t(type === 'hollow-rect' ? 'shape_tube' : type === 'hollow-circ' ? 'shape_pipe' : `shape_${type.split('-')[0]}`)}
+                                                    </button>
                                                 ))}
-                                            </tbody>
-                                        </table>
+                                            </div>
+
+                                            <div className="flex justify-between items-center mb-2">
+                                                <label className={`text-[10px] font-bold ${uiClasses.textMuted}`}>{t('dims')}</label>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-2 mb-2">
+                                                {/* D Input */}
+                                                {(secParams.type !== 'circ' && secParams.type !== 'hollow-circ') ? (
+                                                    <div>
+                                                        <label className={`text-[10px] block ${uiClasses.textMuted}`}>{t('depth')}</label>
+                                                        <input type="number" className={`w-full rounded px-2 py-1 text-xs border ${uiClasses.input}`} value={secParams.d} onChange={e => setSecParams({...secParams, d: parseFloat(e.target.value)})} />
+                                                    </div>
+                                                ) : (
+                                                    <div>
+                                                        <label className={`text-[10px] block ${uiClasses.textMuted}`}>{t('diameter')}</label>
+                                                        <input type="number" className={`w-full rounded px-2 py-1 text-xs border ${uiClasses.input}`} value={secParams.d} onChange={e => setSecParams({...secParams, d: parseFloat(e.target.value)})} />
+                                                    </div>
+                                                )}
+
+                                                {/* B Input */}
+                                                {!(secParams.type === 'circ' || secParams.type === 'hollow-circ') && (
+                                                    <div>
+                                                        <label className={`text-[10px] block ${uiClasses.textMuted}`}>{t('width')}</label>
+                                                        <input type="number" className={`w-full rounded px-2 py-1 text-xs border ${uiClasses.input}`} value={secParams.b} onChange={e => setSecParams({...secParams, b: parseFloat(e.target.value)})} />
+                                                    </div>
+                                                )}
+
+                                                {/* Thickness (Hollow) */}
+                                                {(secParams.type === 'hollow-rect' || secParams.type === 'hollow-circ') && (
+                                                    <div>
+                                                        <label className={`text-[10px] block ${uiClasses.textMuted}`}>{t('thickness')}</label>
+                                                        <input type="number" className={`w-full rounded px-2 py-1 text-xs border ${uiClasses.input}`} value={secParams.t} onChange={e => setSecParams({...secParams, t: parseFloat(e.target.value)})} />
+                                                    </div>
+                                                )}
+
+                                                {/* I & C Shapes specifics */}
+                                                {(secParams.type === 'i-shape' || secParams.type === 'c-shape') && (
+                                                    <>
+                                                        <div>
+                                                            <label className={`text-[10px] block ${uiClasses.textMuted}`}>{t('web_thk')}</label>
+                                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs border ${uiClasses.input}`} value={secParams.tw} onChange={e => setSecParams({...secParams, tw: parseFloat(e.target.value)})} />
+                                                        </div>
+                                                        <div>
+                                                            <label className={`text-[10px] block ${uiClasses.textMuted}`}>{t('flange_thk')}</label>
+                                                            <input type="number" className={`w-full rounded px-2 py-1 text-xs border ${uiClasses.input}`} value={secParams.tf} onChange={e => setSecParams({...secParams, tf: parseFloat(e.target.value)})} />
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className={`w-full h-px my-3 ${isDarkMode ? 'bg-slate-700' : 'bg-gray-200'}`}></div>
+
+                                        {/* 3. CALCULATED PROPERTIES */}
+                                        <div className="space-y-3 mb-3">
+                                            {/* Element Type Toggle */}
+                                            <div className={`flex p-1 rounded mb-2 ${isDarkMode ? 'bg-slate-900' : 'bg-gray-200'}`}>
+                                                <button onClick={()=>setElemProp({...elemProp, type:'rigid'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='rigid'? uiClasses.buttonActive : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-gray-500 hover:text-gray-700')}`}>{t('normal')}</button>
+                                                <button onClick={()=>setElemProp({...elemProp, type:'truss'})} className={`flex-1 text-[10px] py-1 rounded ${elemProp.type==='truss'? uiClasses.buttonActive : (isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-gray-500 hover:text-gray-700')}`}>{t('truss')}</button>
+                                            </div>
+
+                                            {/* E Input */}
+                                            <div>
+                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('elastic')}</label>
+                                                <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none border ${uiClasses.input}`} value={elemProp.E / 1e6} onChange={e => setElemProp({ ...elemProp, E: parseFloat(e.target.value) * 1e6 })} />
+                                            </div>
+                                            {/* Self-Weight Input */}
+                                            <div>
+                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('self_wt')}</label>
+                                                <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none border ${uiClasses.input}`} value={elemProp.selfWeight} onChange={e => setElemProp({ ...elemProp, selfWeight: parseFloat(e.target.value) || 0 })} />
+                                            </div>
+
+                                            {/* Info Grid */}
+                                            <div className={`grid grid-cols-2 gap-3 p-3 rounded-lg border ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-gray-50 border-gray-200'}`}>
+                                                <div className="flex flex-col">
+                                                    <span className={`text-[9px] uppercase tracking-wider mb-1 ${uiClasses.textMuted}`}>{t('inertia')}</span>
+                                                    <span className={`font-mono text-xs font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{Number(elemProp.I).toExponential(3)} m⁴</span>
+                                                </div>
+                                                <div className="flex flex-col">
+                                                    <span className={`text-[9px] uppercase tracking-wider mb-1 ${uiClasses.textMuted}`}>{t('area')}</span>
+                                                    <span className={`font-mono text-xs font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{Number(elemProp.A).toExponential(3)} m²</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* 4. SAVE SECTION */}
+                                        <div className="flex gap-2 items-end pt-2 border-t border-slate-700/50">
+                                            <div className="flex-1">
+                                                <label className={`text-[10px] block mb-1 ${uiClasses.textMuted}`}>{t('sec_name')}</label>
+                                                <input type="text" className={`w-full rounded px-2 py-1 text-xs border ${uiClasses.input}`} value={secParams.name} onChange={e => setSecParams({...secParams, name: e.target.value})} placeholder="e.g., W200x50" />
+                                            </div>
+                                            <button onClick={saveSection} className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] px-3 py-1.5 rounded font-bold h-8 self-end shadow-md">{t('save_sec')}</button>
+                                        </div>
+                                    </div>
+
+                                    {/* [ADD] Saved Sections List Table */}
+                                    <div className={`${uiClasses.innerPanel} p-0 rounded overflow-hidden`}>
+                                        <div className={`p-2 font-bold text-xs border-b ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300' : 'bg-gray-100 border-gray-200 text-gray-700'}`}>
+                                            {t('saved_sec')}
+                                        </div>
+                                        <div className="max-h-40 overflow-y-auto">
+                                            <table className="w-full text-left border-collapse">
+                                                <thead className={`text-[10px] ${uiClasses.textMuted}`}>
+                                                    <tr>
+                                                        <th className="p-2 font-normal">{t('col_name')}</th>
+                                                        <th className="p-2 font-normal">{t('col_A')}</th>
+                                                        <th className="p-2 font-normal">{t('col_I')}</th>
+                                                        <th className="p-2 font-normal text-right">{t('col_E')}</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className={`text-[10px] font-mono ${isDarkMode ? 'text-slate-400' : 'text-gray-600'}`}>
+                                                    {sectionLibrary.map((sec, i) => (
+                                                        <tr key={i} className={`border-b last:border-0 ${isDarkMode ? 'border-slate-800' : 'border-gray-100'}`}>
+                                                            <td className="p-2 font-sans font-bold text-blue-400 cursor-pointer hover:bg-blue-500/10" onClick={() => loadSection(i)}>{sec.name}</td>
+                                                            <td className="p-2 cursor-pointer hover:bg-blue-500/10" onClick={() => loadSection(i)}>{sec.A ? sec.A.toExponential(2) : '-'}</td>
+                                                            <td className="p-2 cursor-pointer hover:bg-blue-500/10" onClick={() => loadSection(i)}>{sec.I ? sec.I.toExponential(2) : '-'}</td>
+                                                            <td className="p-2 text-right cursor-pointer hover:bg-blue-500/10" onClick={() => loadSection(i)}>{(sec.E / 1e9).toFixed(0)}</td>
+                                                            <td className="p-2 text-right">
+                                                                <button 
+                                                                    onClick={(e) => { 
+                                                                        e.stopPropagation(); 
+                                                                        setSectionLibrary(prev => prev.filter((_, idx) => idx !== i)); 
+                                                                    }} 
+                                                                    className="text-red-400 hover:text-red-300 p-1"
+                                                                    title="Delete Section"
+                                                                >
+                                                                    <Icon name="trash-2" className="w-3 h-3" />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 </div>
                             )}
 
                         </div>
                         {/* Sidebar Footer (Status) */}
-                        <div className="p-4 border-t border-slate-700 bg-slate-900">
+                        <div className={`p-4 border-t ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-gray-200 bg-gray-50'}`}>
                              {error ? (
                                 <div className="text-red-400 text-xs font-bold flex items-center gap-2"><Icon name="alert-triangle" className="w-4 h-4" /> {error}</div>
                             ) : (
