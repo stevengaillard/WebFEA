@@ -481,7 +481,7 @@
         const CanvasView = ({ 
             nodes, elements, supports, loads, results, 
             viewSettings, tool, selectedNode, selectedElement, selectedLoad, 
-            onCanvasInteract, textSize, isDarkMode, t // <--- ADD t PROP
+            onCanvasInteract, textSize, isDarkMode, isMobile, t
         }) => {
             const canvasRef = useRef(null);
             const [pan, setPan] = useState({ x: 100, y: 500 });
@@ -1387,12 +1387,23 @@
                 if (tool === 'element' && selectedNode !== null) {
                     const n = nodes[selectedNode];
                     const p1 = toScreen(n.x, n.y);
-                    const worldM = toWorld(mousePos.x, mousePos.y);
-                    const snapX = Math.round(worldM.x / gridStep) * gridStep;
-                    const snapY = Math.round(worldM.y / gridStep) * gridStep;
-                    const p2 = toScreen(snapX, snapY);
                     
-                    ctx.strokeStyle = '#60a5fa'; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
+                    // On mobile, don't show rubber band line (no mouse cursor)
+                    if (!isMobile) {
+                        const worldM = toWorld(mousePos.x, mousePos.y);
+                        const snapX = Math.round(worldM.x / gridStep) * gridStep;
+                        const snapY = Math.round(worldM.y / gridStep) * gridStep;
+                        const p2 = toScreen(snapX, snapY);
+                        
+                        ctx.strokeStyle = '#60a5fa'; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
+                    }
+                    
+                    // Show pulsing ring around selected start node (helpful on mobile)
+                    ctx.strokeStyle = '#60a5fa';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(p1.x, p1.y, 12, 0, 2 * Math.PI);
+                    ctx.stroke();
                 }
 
             // MODIFY: Added 'textSize' and 'isDarkMode' to dependencies so it redraws immediately
@@ -1675,7 +1686,7 @@
                     <div className="absolute bottom-4 left-4 z-20 bg-slate-800/80 p-2 rounded text-[10px] text-slate-300 pointer-events-none hidden sm:block">
                         <p>{t('instr_zoom')}</p>
                         <p>{t('mode')}: {tool.toUpperCase()}</p>
-                        <p>{tool === 'node' ? t('click_add') : tool === 'element' ? t('click_start') : tool === 'support' ? t('click_node') : tool === 'load' ? t('click_node_inst') : t('select_items')}</p>
+                        <p>{tool === 'node' ? t('click_add') : tool === 'element' ? (isMobile && selectedNode !== null ? 'Tap second node' : t('click_start')) : tool === 'support' ? t('click_node') : tool === 'load' ? t('click_node_inst') : t('select_items')}</p>
                     </div>
                     {/* ADDED: Results Legend */}
                     {results && plotData && (
@@ -2296,6 +2307,17 @@
             const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, defScale: 100, diaScale: 0.5 });
             const [activeTab, setActiveTab] = useState('geo');
             const [textSize, setTextSize] = useState(11);
+            // Detect if device is mobile/touch-enabled
+            const [isMobile, setIsMobile] = useState(false);
+
+            useEffect(() => {
+                const checkMobile = () => {
+                    setIsMobile('ontouchstart' in window || navigator.maxTouchPoints > 0);
+                };
+                checkMobile();
+                window.addEventListener('resize', checkMobile);
+                return () => window.removeEventListener('resize', checkMobile);
+            }, []);
 
             // [FIX] Add missing state variables
             const [suppInput, setSuppInput] = useState({ type: 'fixed', angle: 0, nodeId: '' });
@@ -2484,9 +2506,10 @@
                 }
                 else if (tool === 'element') {
                     if (nodeId !== null) {
-                        if (selectedNode === null) setSelectedNode(nodeId);
-                        else if (selectedNode !== nodeId) {
-                            addToHistory(); // <--- ADD THIS
+                        if (selectedNode === null) {
+                            setSelectedNode(nodeId);
+                        } else if (selectedNode !== nodeId) {
+                            addToHistory();
                             setElements(prev => [...prev, { 
                                 id: prev.length + 1, n1: selectedNode, n2: nodeId, 
                                 E: elemProp.E, I: elemProp.I, A: elemProp.A,
@@ -2495,7 +2518,11 @@
                             }]);  
                             setSelectedNode(null);
                         }
-                    } else setSelectedNode(null);
+                    } else {
+                        // On desktop, clicking empty space cancels selection
+                        // On mobile, keep the selection so user can tap second node
+                        if (!isMobile) setSelectedNode(null);
+                    }
                 }
                 else if (tool === 'support') {
                     if (nodeId !== null) addSupport(nodeId);
@@ -3678,10 +3705,11 @@
                             tool={tool} 
                             selectedNode={selectedNode} 
                             selectedElement={selectedElement} 
-                            selectedLoad={selectedLoad} // <--- ADD THIS
+                            selectedLoad={selectedLoad}
                             onCanvasInteract={handleCanvasInteract} 
                             textSize={textSize} 
                             isDarkMode={isDarkMode}
+                            isMobile={isMobile}
                             t={t}
                         />
                     </div>
