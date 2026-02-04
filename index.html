@@ -490,6 +490,9 @@
             const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
             const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
             
+            // [ADD] Ref to track pinch distance
+            const touchDist = useRef(null);
+            
             // ADDED: Hover State
             const [hoverData, setHoverData] = useState(null);
 
@@ -1399,9 +1402,13 @@
             }, [nodes, elements, supports, loads, results, pan, zoom, viewSettings, tool, selectedNode, selectedElement, selectedLoad, mousePos, textSize, isDarkMode]);
 
             // Interaction Handlers
-            // Interaction Handlers
-            const handleWheel = (e) => setZoom(Math.max(5, zoom - e.deltaY * 0.1));
-            
+            const handleWheel = (e) => {
+                // [MODIFY] Exponential zoom allows "infinite" scaling in and out
+                // Lower limit set to 0.01 (very wide view), factor adjusted for smoothness
+                const scale = Math.exp(-e.deltaY * 0.001);
+                setZoom(z => Math.max(0.01, z * scale));
+            };
+
             const handleMouseDown = (e) => {
                 const rect = canvasRef.current.getBoundingClientRect();
                 // Handle touch or mouse event
@@ -1472,14 +1479,54 @@
 
             const handleMouseMove = (e) => handlePointerMove(e.clientX, e.clientY);
             
-            const handleTouchMove = (e) => { 
-                if(!isDragging && hoverData) e.preventDefault(); 
-                handlePointerMove(e.touches[0].clientX, e.touches[0].clientY); 
+            // [ADD] Handle Pinch Start vs Pan Start
+            const handleTouchStart = (e) => {
+                if (e.touches.length === 2) {
+                    // Start Pinching: Reset drag and store initial distance
+                    setIsDragging(false);
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    touchDist.current = Math.sqrt(dx * dx + dy * dy);
+                } else {
+                    // Start Panning (Standard MouseDown logic)
+                    handleMouseDown(e);
+                }
+            };
+            
+            const handleTouchMove = (e) => {
+                // [FIX] Always prevent scrolling when interacting with canvas
+                e.preventDefault();
+
+                if (e.touches.length === 2) {
+                    // PINCH ZOOM LOGIC
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (touchDist.current) {
+                        // Calculate scale factor based on distance change
+                        const scale = dist / touchDist.current;
+                        // Apply zoom (smooth multiplicative scaling)
+                        setZoom(z => Math.max(0.01, z * scale));
+                    }
+                    // Update distance for next frame
+                    touchDist.current = dist;
+                } else {
+                    // STANDARD PAN LOGIC (1 Finger)
+                    touchDist.current = null; // Reset pinch if fingers lift
+                    if (!isDragging && hoverData) return;
+                    handlePointerMove(e.touches[0].clientX, e.touches[0].clientY);
+                }
             };
             const handleMouseUp = (e) => {
                 setIsDragging(false);
                 const rect = canvasRef.current.getBoundingClientRect();
-                const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+                
+                // [FIX] Mobile Support: Use changedTouches for touchend event
+                const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+                const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+
+                const sx = clientX - rect.left, sy = clientY - rect.top;
                 const worldPos = toWorld(sx, sy);
 
                 // Snap to grid
@@ -1637,7 +1684,7 @@
             return (
                 <div className="flex-1 bg-slate-900 relative overflow-hidden h-full select-none">
                     <canvas ref={canvasRef} onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={() => {setIsDragging(false); setHoverData(null);}} 
-                        onTouchMove={handleTouchMove} onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}
+                        onTouchMove={handleTouchMove} onTouchStart={handleTouchStart} onTouchEnd={handleMouseUp}
                         className={`absolute inset-0 z-10 ${tool === 'pointer' ? 'cursor-grab' : 'cursor-crosshair'}`}
                         style={{cursor: tool === 'pointer' ? (isDragging ? 'grabbing' : 'grab') : 'crosshair'}}
                     />
