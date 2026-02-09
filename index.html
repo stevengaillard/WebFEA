@@ -1133,8 +1133,10 @@
                     // MODIFY: Calculate deformed position so support follows the node
                     let p = toScreen(n.x, n.y);
                     if (results && viewSettings.showDeformed) {
-                        const s = viewSettings.defScale;
-                        // Safe access to displacements
+                        // FIX: Use the same normalized scale as the elements
+                        const norm = (plotData && plotData.scales) ? plotData.scales.d : 1.0;
+                        const s = norm * viewSettings.defScale;
+                        
                         const dx = results.displacements[3 * sup.nodeId] || 0;
                         const dy = results.displacements[3 * sup.nodeId + 1] || 0;
                         p = toScreen(n.x + dx * s, n.y + dy * s);
@@ -1142,101 +1144,131 @@
                     
                     ctx.save();
                     ctx.translate(p.x, p.y);
+
+                    // ... [Keep existing Reaction Drawing Code (lines 538-592) unchanged] ...
                     // DRAW REACTIONS
                     if (results && viewSettings.showReactions) {
-                        // 1. Find members connected to this support node
-                        const connectedMembers = results.memberForces.filter(mf => {
+                        // ... (keep reaction drawing logic) ...
+                         // 1. Find members connected
+                         const connectedMembers = results.memberForces.filter(mf => {
                             const el = elements.find(e => e.id === mf.id);
                             return el.n1 === sup.nodeId || el.n2 === sup.nodeId;
                         });
 
-                        // 2. Sum Global Forces at this node from all connected members
-                        // Reaction = Force required to balance the Member Forces (+ External Loads if any, handled by solver usually, but let's stick to member ends)
-                        // Equilibrium: Reaction + Sum(F_member_global) = 0  =>  Reaction = -Sum(F_member_global)
-                        
                         let rx = 0, ry = 0, rm = 0;
                         
                         connectedMembers.forEach(mf => {
                             const el = elements.find(e => e.id === mf.id);
                             if (el.n1 === sup.nodeId) {
-                                // Start Node forces (Indices 0, 1, 2)
-                                rx += mf.globalForces[0];
-                                ry += mf.globalForces[1];
-                                rm += mf.globalForces[2];
+                                rx += mf.globalForces[0]; ry += mf.globalForces[1]; rm += mf.globalForces[2];
                             } else {
-                                // End Node forces (Indices 3, 4, 5)
-                                rx += mf.globalForces[3];
-                                ry += mf.globalForces[4];
-                                rm += mf.globalForces[5];
+                                rx += mf.globalForces[3]; ry += mf.globalForces[4]; rm += mf.globalForces[5];
                             }
                         });
 
-                        // 3. Subtract any Applied Nodal Loads at this support (Reaction must oppose them too)
                         const directLoad = loads.find(l => l.type === 'point' && l.nodeId === sup.nodeId);
                         if(directLoad) {
-                            // MODIFY: Add load to the Action accumulator (Total Action = Member Force + External Load)
                             rx -= parseFloat(directLoad.fx || 0);
                             ry -= parseFloat(directLoad.fy || 0);
                             rm -= parseFloat(directLoad.m || 0);
                         }
 
-                        // 4. Draw
                         ctx.font = `${textSize}px monospace`;
                         ctx.fillStyle = '#ef4444'; ctx.strokeStyle = '#ef4444';
                         const eps = 0.01;
-
-                        // Rx: Draw to the LEFT (-X direction) relative to node
                         const gap = textSize * 0.8;
 
-                        // Rx
                         if (Math.abs(rx) > eps) {
                             const offset = -45; 
                             const startX = offset;
                             const endX = offset + (rx > 0 ? 15 : -15); 
-                            
                             ctx.beginPath(); ctx.moveTo(startX, 0); ctx.lineTo(endX, 0); ctx.stroke();
                             drawArrowHead(endX, 0, rx > 0 ? 0 : Math.PI, '#ef4444');
-                            
                             ctx.textAlign = 'right';
-                            // Dynamic spacing
                             ctx.fillText(`Rx: ${Math.abs(rx).toFixed(2)}kN`, offset - gap, -(textSize * 0.3));
                             ctx.textAlign = 'left'; 
                         }
-
-                        // Ry
                         if (Math.abs(ry) > eps) {
                             const offset = 45; 
                             const startY = offset;
                             const endY = offset + (ry > 0 ? -15 : 15);
-
                             ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(0, endY); ctx.stroke();
                             drawArrowHead(0, endY, ry > 0 ? -Math.PI/2 : Math.PI/2, '#ef4444');
-                            
-                            // Dynamic spacing
                             ctx.fillText(`Ry: ${Math.abs(ry).toFixed(2)}kN`, gap, offset + (textSize * 0.3));
                         }
-
-                        // Moment
                         if (Math.abs(rm) > eps) {
                             const r = 25;
-                            // Dynamic spacing from circle
                             ctx.fillText(`Rm: ${Math.abs(rm).toFixed(2)}kNm`, r + gap, -(r + gap));
-                            
                             ctx.beginPath(); 
                             ctx.arc(0, 0, r, 0, rm > 0 ? -Math.PI/2 : Math.PI/2, rm > 0); 
                             ctx.stroke();
-                            
                             const tipAng = rm > 0 ? -Math.PI/2 : Math.PI/2;
                             drawArrowHead(r*Math.cos(tipAng), r*Math.sin(tipAng), tipAng + (rm>0? -Math.PI/2 : Math.PI/2), '#ef4444');
                         }
                     }
-                    // Rotate based on input angle (deg to rad)
-                    // -90 adjustment makes 0 degrees = 'floor' (pointing up)
-                    ctx.rotate((sup.angle || 0) * Math.PI / 180);
+                    
+                    // --- AUTOMATIC ROTATION LOGIC ---
+                    const connectedEls = elements.filter(e => e.n1 === sup.nodeId || e.n2 === sup.nodeId);
+                    let autoAngle = 0;
+                    
+                    if (connectedEls.length > 0) {
+                        // 1. Get angles of all beams leaving the node
+                        const angles = connectedEls.map(e => {
+                            const other = e.n1 === sup.nodeId ? nodes[e.n2] : nodes[e.n1];
+                            return Math.atan2(other.y - n.y, other.x - n.x);
+                        }).sort((a, b) => a - b);
+
+                        if (angles.length === 1) {
+                            // If 1 beam, support opposes it (180 deg away)
+                            autoAngle = angles[0] + Math.PI;
+                        } else {
+                            // If multiple beams, find largest angular gap and bisect it
+                            let maxGap = 0;
+                            let startAng = 0;
+                            
+                            for (let i = 0; i < angles.length; i++) {
+                                const curr = angles[i];
+                                const next = angles[(i + 1) % angles.length];
+                                // Normalize gap to be positive
+                                let gap = next - curr;
+                                if (gap < 0) gap += 2 * Math.PI;
+                                
+                                if (gap > maxGap) {
+                                    maxGap = gap;
+                                    startAng = curr;
+                                }
+                            }
+                            autoAngle = startAng + maxGap / 2;
+                        }
+                    } else {
+                        // Default to floor (Up normal) if no beams connected
+                        autoAngle = Math.PI / 2; 
+                    }
+
+                    // Apply Rotation based on Support Type
+                    let rotation = 0;
+
+                    if (sup.rx && sup.ry && sup.rm) { 
+                        // FIXED SUPPORT: Use Smart Auto-Rotation
+                        // Uses the "void" angle calculated above + 180 degree flip to align correctly
+                        rotation = autoAngle + Math.PI; 
+                    } else {
+                        // PIN / ROLLER: Standard "Floor" Orientation
+                        // The drawing primitive points Down (0,0 to 0,14). 
+                        // We rotate 180 degrees so it points Up (supporting the node from below).
+                        rotation = 0;
+                    }
+
+                    // Add manual override from UI settings
+                    rotation += (sup.angle || 0) * Math.PI / 180;
+
+                    // Negate rotation to convert Cartesian (CCW) to Canvas (CW)
+                    ctx.rotate(-rotation);
+                    // --------------------------------
 
                     ctx.lineWidth = 2;
                     ctx.strokeStyle = '#22c55e'; 
-                    ctx.fillStyle = '#0f172a'; // Fill with bg color to cover grid
+                    ctx.fillStyle = '#0f172a'; 
 
                     if (sup.rx && sup.ry && sup.rm) { 
                         // FIXED (Block with hashes on back)
@@ -1278,12 +1310,15 @@
                 nodes.forEach((n, i) => {
                     let p = toScreen(n.x, n.y);
                     if (results && viewSettings.showDeformed) {
-                        const s = viewSettings.defScale;
+                        // FIX: Use the same normalized scale as the elements
+                        const norm = (plotData && plotData.scales) ? plotData.scales.d : 1.0;
+                        const s = norm * viewSettings.defScale;
+                        
                         p = toScreen(n.x + results.displacements[3*i]*s, n.y + results.displacements[3*i+1]*s);
                     }
                     
                     // Node Circle
-                    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 2*Math.PI); 
+                    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 2*Math.PI);
                     if (selectedNode === i) { 
                         ctx.fillStyle = colors.accent; ctx.fill(); 
                         ctx.strokeStyle = isDarkMode ? '#fff' : '#000'; ctx.lineWidth = 2; ctx.stroke(); 
@@ -1780,7 +1815,6 @@
                                 {data.elementId !== undefined ? `${t('beam')} ${data.elementId}` : `${t('node')} ${data.nodeId}`}
                             </span>
                         </div>
-
                             {/* NODAL POINT */}
                             {data.type === 'point' && (
                                 <>
