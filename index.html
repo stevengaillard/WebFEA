@@ -663,14 +663,16 @@
                     return { id: el.id, pts };
                 });
 
+                // DYNAMIC AUTO-SCALING Logic
+                // Normalizes the diagram peak to roughly 1.0 world unit (approx 1 grid box)
                 return { 
                     diagrams, 
                     stats: { maxM, maxV, maxA, maxD },
                     scales: {
-                        m: maxM > 1e-6 ? 1.5 / maxM : 1, 
-                        v: maxV > 1e-6 ? 1.5 / maxV : 1,
-                        a: maxA > 1e-6 ? 1.5 / maxA : 1,
-                        d: maxD > 1e-6 ? 1.0 / maxD : 100
+                        m: maxM > 1e-9 ? 1.0 / maxM : 1, 
+                        v: maxV > 1e-9 ? 1.0 / maxV : 1,
+                        a: maxA > 1e-9 ? 1.0 / maxA : 1,
+                        d: maxD > 1e-9 ? 1.0 / maxD : 1 // Normalize max displacement to 1.0m visual height
                     }
                 };
             }, [results, elements, nodes, loads]);
@@ -773,11 +775,17 @@
                     let drawP1 = p1, drawP2 = p2;
                     
                     if (results && viewSettings.showDeformed) {
-                        const s = viewSettings.defScale;
+                        // Apply Normalized Scale Factor: Max Displacement = 1.0m visual height
+                        // Scale = (scales.d) * (defScale Slider)
+                        const s = plotData.scales.d * viewSettings.defScale; 
+                        
                         const d1x = results.displacements[3*el.n1] * s, d1y = results.displacements[3*el.n1+1] * s;
                         const d2x = results.displacements[3*el.n2] * s, d2y = results.displacements[3*el.n2+1] * s;
-                        drawP1 = toScreen(n1.x + d1x, n1.y + d1y);
-                        drawP2 = toScreen(n2.x + d2x, n2.y + d2y);
+                        
+                        // Screen Coordinates need the zoom factor for the displacement offset (handled by toScreen)
+                        drawP1 = toScreen(n1.x + d1x, n1.y + d1y); 
+                        drawP2 = toScreen(n2.x + d2x, n2.y + d2y); 
+                        
                         ctx.strokeStyle = '#334155'; ctx.setLineDash([5, 5]);
                         ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
                     }
@@ -864,19 +872,17 @@
                             let nx = -dy / L_scr;
                             let ny = dx / L_scr;
 
-                            // FLIP FOR COLUMNS ONLY: 
-                            // If element is predominantly vertical (dy > dx), invert the normal.
-                            // This fixes the Left/Right direction for columns without affecting the Beams.
+                            // FLIP FOR COLUMNS ONLY
                             if (Math.abs(dy) > Math.abs(dx)) {
                                 nx = nx;
                                 ny = ny;
                             }
                             
-                            const s = viewSettings.defScale;
+                            // Normalized scale * user slider
+                            const s = plotData.scales.d * viewSettings.defScale;
 
                             d.pts.forEach(pt => {
-                                // v_disp is in meters. Convert to pixels (zoom). Scale by defScale (s).
-                                // MODIFY: Added negative sign (-) to 'pt.v_disp' to flip the diagram
+                                // Multiply by zoom to convert the 1.0m normalized unit to pixels
                                 const off = -pt.v_disp * s * zoom; 
                                 ctx.lineTo(drawP1.x + pt.t * dx + nx * off, drawP1.y + pt.t * dy + ny * off);
                             });
@@ -1052,21 +1058,20 @@
 
                             // Draw BMD
                             if (viewSettings.showBMD && el.type !== 'truss') {
-                                const scale = plotData.scales.m * viewSettings.diaScale * 40; 
+                                // Normalized Scale * Slider * Zoom (Pixels per meter)
+                                const scale = plotData.scales.m * viewSettings.diaScale * zoom; 
                                 ctx.fillStyle = 'rgba(239, 68, 68, 0.2)'; ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
                                 
                                 let maxVal = 0, maxT = 0, maxOff = 0;
 
                                 d.pts.forEach(pt => {
-                                    // [MODIFY] Removed negative sign (-) to flip diagram
                                     const off = pt.mx * scale; 
                                     if(Math.abs(pt.mx) > Math.abs(maxVal)) { maxVal = pt.mx; maxT = pt.t; maxOff = off; }
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-                                // [MODIFY] Updated labels to match new positive direction
                                 drawLabel(0, d.pts[0].mx, 'kNm', d.pts[0].mx*scale, '#fca5a5'); // Start
                                 drawLabel(1, d.pts[d.pts.length-1].mx, 'kNm', d.pts[d.pts.length-1].mx*scale, '#fca5a5'); // End
                                 if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, 'kNm', maxOff, '#ffffff'); // Peak
@@ -1074,21 +1079,19 @@
 
                             // Draw SFD
                             if (viewSettings.showSFD && el.type !== 'truss') {
-                                const scale = plotData.scales.v * viewSettings.diaScale * 40;
+                                const scale = plotData.scales.v * viewSettings.diaScale * zoom;
                                 ctx.fillStyle = 'rgba(59, 130, 246, 0.2)'; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
                                 
                                 let maxVal = 0, maxT = 0, maxOff = 0;
 
                                 d.pts.forEach(pt => {
-                                    // [MODIFY] Added negative sign (-) to flip diagram
                                     const off = -pt.vx * scale;
                                     if(Math.abs(pt.vx) > Math.abs(maxVal)) { maxVal = pt.vx; maxT = pt.t; maxOff = off; }
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-                                // [MODIFY] Updated labels to match new negative direction
                                 drawLabel(0, d.pts[0].vx, 'kN', -d.pts[0].vx*scale, '#93c5fd');
                                 drawLabel(1, d.pts[d.pts.length-1].vx, 'kN', -d.pts[d.pts.length-1].vx*scale, '#93c5fd');
                                 if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, 'kN', maxOff, '#ffffff');
@@ -1096,17 +1099,15 @@
 
                             // Draw AFD
                             if (viewSettings.showAFD) {
-                                const scale = plotData.scales.a * viewSettings.diaScale * 40;
+                                const scale = plotData.scales.a * viewSettings.diaScale * zoom;
                                 ctx.fillStyle = 'rgba(236, 72, 153, 0.2)'; ctx.strokeStyle = '#ec4899'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
                                 d.pts.forEach(pt => {
-                                    // [MODIFY] Added negative sign (-) to flip diagram
                                     const off = -pt.ax * scale; 
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
                                 
-                                // [MODIFY] Updated label to match new negative direction
                                 drawLabel(0.5, d.pts[Math.floor(d.pts.length/2)].ax, 'kN', -d.pts[Math.floor(d.pts.length/2)].ax * scale, '#f9a8d4');
                             }
                             
@@ -1115,9 +1116,8 @@
                                 let maxD = 0, maxT = 0;
                                 d.pts.forEach(pt => { if(Math.abs(pt.v_disp) > Math.abs(maxD)) { maxD = pt.v_disp; maxT = pt.t; } });
                                 if(Math.abs(maxD) > 0.0001) {
-                                    const s = viewSettings.defScale;
-                                    const off = maxD * s * zoom; 
-                                    // MODIFY: Add 'δ: ' prefix to clarify this is deflection
+                                    const s = plotData.scales.d * viewSettings.defScale;
+                                    const off = -maxD * s * zoom; 
                                     drawLabel(maxT, maxD*1000, 'mm', off, '#34d399', 'δ: ');
                                 }
                             }
@@ -2342,7 +2342,8 @@
             const [selectedNode, setSelectedNode] = useState(null);
             const [selectedElement, setSelectedElement] = useState(null);
             const [selectedLoad, setSelectedLoad] = useState(null);
-            const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, defScale: 100, diaScale: 0.5 });
+            // Changed defaults: defScale from 100 to 1, diaScale from 0.5 to 1
+            const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, defScale: 1, diaScale: 1 });
             const [activeTab, setActiveTab] = useState('geo');
             const [textSize, setTextSize] = useState(11);
 
@@ -3186,14 +3187,14 @@
                                             <span>{t('def_scale')}</span>
                                             <span>{viewSettings.defScale}x</span>
                                         </div>
-                                        <input type="range" min="1" max="200" value={viewSettings.defScale} onChange={e=>setViewSettings({...viewSettings, defScale:Number(e.target.value)})} className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"/>
+                                        <input type="range" min="0.1" max="1" step="0.1" value={viewSettings.defScale} onChange={e=>setViewSettings({...viewSettings, defScale:Number(e.target.value)})} className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"/>
                                     </div>
                                     <div>
                                         <div className="flex justify-between text-[10px] text-slate-400 mb-1">
                                             <span>{t('dia_scale')}</span>
                                             <span>{viewSettings.diaScale}x</span>
                                         </div>
-                                        <input type="range" min="0.1" max="5" step="0.1" value={viewSettings.diaScale} onChange={e=>setViewSettings({...viewSettings, diaScale:Number(e.target.value)})} className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"/>
+                                        <input type="range" min="1" max="3" step="0.1" value={viewSettings.diaScale} onChange={e=>setViewSettings({...viewSettings, diaScale:Number(e.target.value)})} className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"/>
                                     </div>
                                 </div>
 
