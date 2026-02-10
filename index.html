@@ -2333,6 +2333,7 @@
                 unit_metric_cm: "Metric (kgf, cm)",
                 unit_metric_t: "Metric (t, m)",
                 unit_imperial: "Imperial (k, ft)",
+                templates: "Templates",
             },
             zh: {
                 sec_lib: "斷面庫",
@@ -2535,6 +2536,7 @@
                 unit_metric_cm: "公制 (kgf, cm)",
                 unit_metric_t: "公制 (t, m)",
                 unit_imperial: "英制 (k, ft)",
+                templates: "結構範本",
             }
         };
         const Icon = React.memo(({ name, className }) => {
@@ -3801,7 +3803,7 @@
                             
                             {/* MODIFY START: Enhanced Template Section */}
                             <div className="space-y-2">
-                                <label className={`text-[10px] uppercase font-bold tracking-wider ${uiClasses.textMuted}`}>Templates</label>
+                                <label className={`text-[10px] uppercase font-bold tracking-wider ${uiClasses.textMuted}`}>{t('templates')}</label>
                                 <div className="grid grid-cols-2 gap-2">
                                     <button onClick={loadCantilever} className={`text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
                                         {t('load_cantilever')}
@@ -4231,7 +4233,7 @@
 
                                             {/* E Input */}
                                             <div>
-                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('elastic')} ({units.stress}) ({units.stress})</label>
+                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('elastic')} ({units.stress})</label>
                                                 <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none border ${uiClasses.input}`} value={elemProp.E} onChange={e => setElemProp({ ...elemProp, E: parseFloat(e.target.value) || 0 })} />
                                             </div>
                                             {/* Self-Weight Input */}
