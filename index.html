@@ -183,7 +183,30 @@
                         F[3*nodeId] += fx; F[3*nodeId+1] += fy; F[3*nodeId+2] += m;
                     };
 
-                    this.loads.forEach(load => {
+                    // MODIFY START: Generate Self-Weight Loads and combine with User Loads
+                    const selfWeightLoads = this.elements
+                        .filter(el => el.selfWeight && Math.abs(el.selfWeight) > 1e-9)
+                        .map(el => {
+                            const n1 = this.nodes[el.n1];
+                            const n2 = this.nodes[el.n2];
+                            const len = Math.sqrt(Math.pow(n2.x - n1.x, 2) + Math.pow(n2.y - n1.y, 2));
+                            return {
+                                type: 'dist',
+                                elementId: el.id,
+                                wStart: el.selfWeight,
+                                wEnd: el.selfWeight,
+                                dStart: 0,
+                                dEnd: len,
+                                angle: -90, // Gravity acts down
+                                angleRef: 'global' // Global coordinate system
+                            };
+                        });
+
+                    const effectiveLoads = [...this.loads, ...selfWeightLoads];
+
+                    // Replace 'this.loads.forEach' with 'effectiveLoads.forEach'
+                    effectiveLoads.forEach(load => {
+                    // MODIFY END
                         // A. NODAL LOADS (Directly added)
                         if (load.type === 'point' && load.nodeId !== undefined) {
                             addGlobalF(load.nodeId, parseFloat(load.fx || 0), parseFloat(load.fy || 0), parseFloat(load.m || 0));
@@ -483,7 +506,7 @@
         const CanvasView = ({ 
             nodes, elements, supports, loads, results, 
             viewSettings, tool, selectedNode, selectedElement, selectedLoad, 
-            onCanvasInteract, textSize, isDarkMode, t // <--- ADD t PROP
+            onCanvasInteract, textSize, isDarkMode, t, units // <--- ADD units
         }) => {
             const canvasRef = useRef(null);
             const [pan, setPan] = useState({ x: 100, y: 500 });
@@ -497,23 +520,49 @@
             
             // ADDED: Hover State
             const [hoverData, setHoverData] = useState(null);
-
+            // [ADD] Auto-scale zoom when units change to maintain visual stability
+            const prevUnitRef = useRef(units);
+            useEffect(() => {
+                const oldU = prevUnitRef.current;
+                if (oldU.name !== units.name) {
+                    const ratio = units.l_mul / oldU.l_mul;
+                    // Adjust zoom inversely to the unit scaling to keep image stable
+                    setZoom(z => z / ratio);
+                }
+                prevUnitRef.current = units;
+            }, [units]);
             // ROBUST INTEGRATOR: Calculates internal forces at any x by summing load effects
             const getBeamValues = (el, x, L) => {
                 if (!results) return null;
                 const res = results.memberForces.find(f => f.id === el.id);
                 
                 // 1. Start with Nodal Forces (Local)
-                // Note: res.moment1 is the Nodal Action (CCW). Internal Moment M(x) convention usually starts opposite.
-                // We use standard beam sign convention: Sagging Positive.
                 let Mx = -res.moment1 + res.shearStart * x; // Moment from reactions
                 let Vx = res.shearStart;                    // Shear from reactions
                 let Ax = res.axial;                         // Axial from reactions
                 
-                // 2. Subtract effect of loads applied between 0 and x
-                const elLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
+                // MODIFY START: Include Self-Weight in Diagram Calculation
+                // 1. Filter user loads on this element
+                const userLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
                 
+                // 2. Create pseudo-load for self-weight if it exists
+                const elLoads = [...userLoads];
+                if (el.selfWeight && Math.abs(el.selfWeight) > 1e-9) {
+                    elLoads.push({
+                        type: 'dist',
+                        elementId: el.id,
+                        wStart: el.selfWeight,
+                        wEnd: el.selfWeight,
+                        dStart: 0,
+                        dEnd: L,
+                        angle: -90,
+                        angleRef: 'global'
+                    });
+                }
+                
+                // 3. Process all loads (User + Self-Weight)
                 elLoads.forEach(l => {
+                // MODIFY END
                     // Resolve Load Vector relative to Beam
                     const rawAng = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
                     
@@ -636,8 +685,13 @@
                     const L = Math.sqrt(dx*dx + dy*dy);
                     
                     const pts = [];
-                    const steps = 40; // Increased resolution for partial loads
+                    const steps = 40; 
                     
+                    // MODIFY START: Get local axial displacements for total magnitude calc
+                    const u1 = res.dispLocal[0];
+                    const u2 = res.dispLocal[3];
+                    // MODIFY END
+
                     for (let i = 0; i <= steps; i++) {
                         const t = i / steps;
                         const x = t * L;
@@ -647,7 +701,7 @@
                         const { mx, vx, ax, disp } = vals;
                         
                         // Simple linear interpolation for reference line (to subtract from disp)
-                        // This isolates the "curve" from the rigid body motion
+                        // This isolates the "curve" from the rigid body motion for DRAWING
                         const v1 = res.dispLocal[1];
                         const v2 = res.dispLocal[4];
                         const v_linear = v1 * (1-t) + v2 * t;
@@ -656,7 +710,17 @@
                         if (Math.abs(mx) > maxM) maxM = Math.abs(mx);
                         if (Math.abs(vx) > maxV) maxV = Math.abs(vx);
                         if (Math.abs(ax) > maxA) maxA = Math.abs(ax);
-                        if (Math.abs(v_disp) > maxD) maxD = Math.abs(v_disp);
+                        
+                        // MODIFY START: Calculate correct Global Displacement Magnitude for STATISTICS
+                        // Local axial displacement approx (Linear interpolation)
+                        const ux = u1 * (1-t) + u2 * t; 
+                        
+                        // Total magnitude = sqrt(u(x)^2 + v(x)^2)
+                        // Note: 'disp' returned by getBeamValues is the total local transverse displacement v(x)
+                        const totalDisp = Math.sqrt(ux*ux + disp*disp);
+                        
+                        if (totalDisp > maxD) maxD = totalDisp;
+                        // MODIFY END
 
                         pts.push({ t, mx, vx, ax, v_disp });
                     }
@@ -664,7 +728,6 @@
                 });
 
                 // DYNAMIC AUTO-SCALING Logic
-                // Normalizes the diagram peak to roughly 1.0 world unit (approx 1 grid box)
                 return { 
                     diagrams, 
                     stats: { maxM, maxV, maxA, maxD },
@@ -672,7 +735,7 @@
                         m: maxM > 1e-9 ? 1.0 / maxM : 1, 
                         v: maxV > 1e-9 ? 1.0 / maxV : 1,
                         a: maxA > 1e-9 ? 1.0 / maxA : 1,
-                        d: maxD > 1e-9 ? 1.0 / maxD : 1 // Normalize max displacement to 1.0m visual height
+                        d: maxD > 1e-9 ? 1.0 / maxD : 1 
                     }
                 };
             }, [results, elements, nodes, loads]);
@@ -751,7 +814,9 @@
                     ctx.moveTo(p.x, 0); ctx.lineTo(p.x, h);
                     if (i % 2 === 0) { 
                         ctx.fillStyle = colors.gridText; 
-                        ctx.fillText(val.toFixed(3).replace(/\.?0+$/, '') + 'm', p.x + 2, h - (textSize + 5)); 
+                        // Divide by grid_div to normalize display (e.g. 4000mm -> 4m)
+                        const labelVal = val / units.grid_div;
+                        ctx.fillText(labelVal.toFixed(3).replace(/\.?0+$/, '') + units.grid_label, p.x + 2, h - (textSize + 5)); 
                     }
                 }
                 for (let i = startY; i <= endY; i++) { 
@@ -760,7 +825,8 @@
                     ctx.moveTo(0, p.y); ctx.lineTo(w, p.y);
                     if (i % 2 === 0) { 
                         ctx.fillStyle = colors.gridText; 
-                        ctx.fillText(val.toFixed(3).replace(/\.?0+$/, '') + 'm', 5, p.y + 2); 
+                        const labelVal = val / units.grid_div;
+                        ctx.fillText(labelVal.toFixed(3).replace(/\.?0+$/, '') + units.grid_label, 5, p.y + 2);
                     }
                 }
                 ctx.stroke();
@@ -817,7 +883,7 @@
                             // Shadow for contrast
                             ctx.shadowColor = isDarkMode ? '#000' : '#fff'; 
                             ctx.shadowBlur = 4; 
-                            ctx.fillText(`${res.axial.toFixed(2)}kN`, 0, -4);
+                            ctx.fillText(`${res.axial.toFixed(2)}${units.force}`, 0, -4); // Replaced 'kN'
                             
                             ctx.restore();
                         }
@@ -878,12 +944,13 @@
                                 ny = ny;
                             }
                             
-                            // Normalized scale * user slider
-                            const s = plotData.scales.d * viewSettings.defScale;
+                            // FIX: Use Fixed Pixel Reference (50px) instead of zoom
+                            // This ensures the max deformation is always ~50px high on screen
+                            const s = plotData.scales.d * viewSettings.defScale * 50;
 
                             d.pts.forEach(pt => {
-                                // Multiply by zoom to convert the 1.0m normalized unit to pixels
-                                const off = -pt.v_disp * s * zoom; 
+                                // Multiply by s (which now includes the 50px factor)
+                                const off = -pt.v_disp * s; 
                                 ctx.lineTo(drawP1.x + pt.t * dx + nx * off, drawP1.y + pt.t * dy + ny * off);
                             });
                             ctx.lineTo(drawP2.x, drawP2.y);
@@ -921,18 +988,18 @@
                     elLoads.forEach(l => {
                         const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
                         
-                        // Style Config
-                        const baseColor = isSelected ? '#f87171' : '#facc15'; // Bright Red vs Yellow
+                        // ... (keep style config colors) ...
+                        const baseColor = isSelected ? '#f87171' : '#facc15'; 
                         const distColor = isSelected ? '#f87171' : '#eab308';
                         const fillColor = isSelected ? 'rgba(248, 113, 113, 0.3)' : 'rgba(234, 179, 8, 0.2)';
 
-                        ctx.save(); // Isolate styles
+                        ctx.save(); 
                         if (isSelected) {
                             ctx.shadowColor = baseColor;
-                            ctx.shadowBlur = 15; // Glow effect
+                            ctx.shadowBlur = 15; 
                             ctx.lineWidth = 3;
                         } else {
-                            ctx.lineWidth = 1; // Reset width for non-selected
+                            ctx.lineWidth = 1; 
                         }
 
                         const dx = drawP2.x - drawP1.x, dy = drawP2.y - drawP1.y;
@@ -941,7 +1008,9 @@
                         const L_phys = Math.sqrt((n2.x - n1.x)**2 + (n2.y - n1.y)**2);
                         const dir = 1;
                         
+                        // ... inside elLoads loop ...
                         if (l.type === 'point_span') {
+                            
                             const dist = parseFloat(l.dist !== undefined ? l.dist : L_phys/2);
                             const t = dist / L_phys;
                             const px = drawP1.x + t * dx;
@@ -954,9 +1023,25 @@
                                 ang += beamAngWorld;
                             }
                             const scrAng = -ang; 
-                            const arrowLen = 20;
-                            const tax = px - dir * Math.cos(scrAng) * arrowLen;
-                            const tay = py - dir * Math.sin(scrAng) * arrowLen;
+                            
+                            // MODIFY START: Separate logic for Vertical vs Horizontal
+                            let nx, ny;
+                            // Check if element is visually vertical (screen dy > screen dx)
+                            if (Math.abs(dy) > Math.abs(dx)) {
+                                // Vertical Element Logic
+                                nx = Math.cos(scrAng);
+                                ny = -Math.sin(scrAng);
+                            } else {
+                                // Horizontal Element Logic
+                                nx = -Math.cos(scrAng);
+                                ny = Math.sin(scrAng);
+                            }
+                            // MODIFY END
+
+                            // FIX: Fixed visual arrow length (30px)
+                            const arrowLen = 30;
+                            const tax = px - nx * arrowLen;
+                            const tay = py - ny * arrowLen;
                             
                             ctx.strokeStyle = baseColor; ctx.fillStyle = baseColor;
                             
@@ -964,9 +1049,10 @@
                             drawArrowHead(px, py, Math.atan2(py - tay, px - tax), baseColor);
                             
                             ctx.fillStyle = '#fef08a'; 
-                            ctx.fillText(`${mag}kN`, tax, tay - (textSize * 0.5));
+                            ctx.fillText(`${mag}${units.force}`, tax, tay - (textSize * 0.5)); 
                         }
                         else if (l.type === 'dist') {
+                            // ... (keep dist calculation lines) ...
                             const raw_d1 = parseFloat(l.dStart || 0);
                             const raw_d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : L_phys);
                             const d1 = Math.max(0, Math.min(L_phys, raw_d1));
@@ -987,14 +1073,29 @@
                                 ang += beamAngWorld;
                             }
                             const scrAng = -ang; 
-                            const nx = Math.cos(scrAng), ny = Math.sin(scrAng);
-                            const scale = 2;  
+                            
+                            // MODIFY START: Separate logic for Vertical vs Horizontal
+                            let nx, ny;
+                            // Check if element is visually vertical (screen dy > screen dx)
+                            if (Math.abs(dy) > Math.abs(dx)) {
+                                // Vertical Element Logic
+                                nx = Math.cos(scrAng);
+                                ny = -Math.sin(scrAng);
+                            } else {
+                                // Horizontal Element Logic
+                                nx = -Math.cos(scrAng);
+                                ny = Math.sin(scrAng);
+                            }
+                            // FIX: Visual height should be constant pixels (e.g. 25px max), not w1 * scale
+                            const maxW = Math.max(Math.abs(w1), Math.abs(w2), 1);
+                            const visualScale = 25 / maxW; 
+                            
+                            const p1_tip = { x: pStart.x - dir * nx * w1 * visualScale, y: pStart.y - dir * ny * w1 * visualScale };
+                            const p2_tip = { x: pEnd.x - dir * nx * w2 * visualScale, y: pEnd.y - dir * ny * w2 * visualScale };
                             
                             const p1_base = pStart;
                             const p2_base = pEnd;
-                            const p2_tip = { x: pEnd.x - dir * nx * w2 * scale, y: pEnd.y - dir * ny * w2 * scale }; 
-                            const p1_tip = { x: pStart.x - dir * nx * w1 * scale, y: pStart.y - dir * ny * w1 * scale };
-                            
+
                             ctx.fillStyle = fillColor;
                             ctx.strokeStyle = distColor;
                             
@@ -1007,8 +1108,8 @@
                             ctx.fill(); ctx.stroke();
 
                             ctx.fillStyle = '#fef08a'; 
-                            ctx.fillText(`${w1}kN/m`, p1_tip.x, p1_tip.y - (textSize * 0.6));
-                            if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${w2}kN/m`, p2_tip.x, p2_tip.y - (textSize * 0.6));
+                            ctx.fillText(`${w1}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
+                            if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${w2}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
                             
                             const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
                             for(let i=0; i<=count; i++) {
@@ -1016,14 +1117,14 @@
                                 const tx = p1_base.x + s*(p2_base.x - p1_base.x);
                                 const ty = p1_base.y + s*(p2_base.y - p1_base.y);
                                 const mag = w1*(1-s) + w2*s;
-                                const bx = tx - dir * nx * mag * scale;
-                                const by = ty - dir * ny * mag * scale;
+                                const bx = tx - dir * nx * mag * visualScale;
+                                const by = ty - dir * ny * mag * visualScale;
                                 
                                 ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
                                 drawArrowHead(tx, ty, Math.atan2(ty - by, tx - bx), distColor);
                             }
                         }
-                        ctx.restore(); // Restore context
+                        ctx.restore(); 
                     });
 
                     // Results Diagrams (Global Scaled)
@@ -1041,11 +1142,12 @@
                                 const ly = drawP1.y + t * dy + ny * offsetPx;
                                 
                                 // Text Background for readability
-                                ctx.font = fontBold; // Use bold font
-                                const text = `${prefix}${val.toFixed(2)}${unit}`;
+                                ctx.font = fontBold; 
+                                // FIX: Format large numbers using exponential if needed, or simple fixed
+                                const valStr = Math.abs(val) > 10000 ? val.toExponential(2) : val.toFixed(2);
+                                const text = `${prefix}${valStr}${unit}`;
                                 const metrics = ctx.measureText(text);
                                 
-                                // Optional: Small background box for text in busy areas
                                 ctx.fillStyle = isDarkMode ? 'rgba(15, 23, 42, 0.7)' : 'rgba(255, 255, 255, 0.8)';
                                 const pad = 2;
                                 ctx.fillRect(lx + pad, ly - pad - textSize, metrics.width + pad*2, textSize + pad*2);
@@ -1058,8 +1160,8 @@
 
                             // Draw BMD
                             if (viewSettings.showBMD && el.type !== 'truss') {
-                                // Normalized Scale * Slider * Zoom (Pixels per meter)
-                                const scale = plotData.scales.m * viewSettings.diaScale * zoom; 
+                                // FIX: Use Fixed Pixel Scale (50px reference)
+                                const scale = plotData.scales.m * viewSettings.diaScale * 50; 
                                 ctx.fillStyle = 'rgba(239, 68, 68, 0.2)'; ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
                                 
@@ -1072,14 +1174,15 @@
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-                                drawLabel(0, d.pts[0].mx, 'kNm', d.pts[0].mx*scale, '#fca5a5'); // Start
-                                drawLabel(1, d.pts[d.pts.length-1].mx, 'kNm', d.pts[d.pts.length-1].mx*scale, '#fca5a5'); // End
-                                if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, 'kNm', maxOff, '#ffffff'); // Peak
+                                drawLabel(0, d.pts[0].mx, units.mom, d.pts[0].mx*scale, '#fca5a5'); // Start
+                                drawLabel(1, d.pts[d.pts.length-1].mx, units.mom, d.pts[d.pts.length-1].mx*scale, '#fca5a5'); // End
+                                if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, units.mom, maxOff, '#ffffff'); // Peak
                             }
 
                             // Draw SFD
                             if (viewSettings.showSFD && el.type !== 'truss') {
-                                const scale = plotData.scales.v * viewSettings.diaScale * zoom;
+                                // FIX: Use Fixed Pixel Scale (50px reference)
+                                const scale = plotData.scales.v * viewSettings.diaScale * 50;
                                 ctx.fillStyle = 'rgba(59, 130, 246, 0.2)'; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
                                 
@@ -1092,14 +1195,15 @@
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-                                drawLabel(0, d.pts[0].vx, 'kN', -d.pts[0].vx*scale, '#93c5fd');
-                                drawLabel(1, d.pts[d.pts.length-1].vx, 'kN', -d.pts[d.pts.length-1].vx*scale, '#93c5fd');
-                                if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, 'kN', maxOff, '#ffffff');
+                                drawLabel(0, d.pts[0].vx, units.force, -d.pts[0].vx*scale, '#93c5fd'); 
+                                drawLabel(1, d.pts[d.pts.length-1].vx, units.force, -d.pts[d.pts.length-1].vx*scale, '#93c5fd');
+                                if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, units.force, maxOff, '#ffffff');
                             }
 
                             // Draw AFD
                             if (viewSettings.showAFD) {
-                                const scale = plotData.scales.a * viewSettings.diaScale * zoom;
+                                // FIX: Use Fixed Pixel Scale (50px reference)
+                                const scale = plotData.scales.a * viewSettings.diaScale * 50;
                                 ctx.fillStyle = 'rgba(236, 72, 153, 0.2)'; ctx.strokeStyle = '#ec4899'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
                                 d.pts.forEach(pt => {
@@ -1108,7 +1212,7 @@
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
                                 
-                                drawLabel(0.5, d.pts[Math.floor(d.pts.length/2)].ax, 'kN', -d.pts[Math.floor(d.pts.length/2)].ax * scale, '#f9a8d4');
+                                drawLabel(0.5, d.pts[Math.floor(d.pts.length/2)].ax, units.force, -d.pts[Math.floor(d.pts.length/2)].ax * scale, '#f9a8d4'); 
                             }
                             
                             // Deformed Max Label
@@ -1116,9 +1220,13 @@
                                 let maxD = 0, maxT = 0;
                                 d.pts.forEach(pt => { if(Math.abs(pt.v_disp) > Math.abs(maxD)) { maxD = pt.v_disp; maxT = pt.t; } });
                                 if(Math.abs(maxD) > 0.0001) {
-                                    const s = plotData.scales.d * viewSettings.defScale;
-                                    const off = -maxD * s * zoom; 
-                                    drawLabel(maxT, maxD*1000, 'mm', off, '#34d399', 'δ: ');
+                                    // FIX: Use Fixed Pixel Scale (50px reference) for label offset too
+                                    const s = plotData.scales.d * viewSettings.defScale * 50;
+                                    const off = -maxD * s; 
+
+                                    const defMult = units.grid_div === 1 ? 1000 : 1; 
+                                    
+                                    drawLabel(maxT, maxD * defMult, units.def, off, '#34d399', 'δ: '); 
                                 }
                             }
                         }
@@ -1178,28 +1286,35 @@
                         const eps = 0.01;
                         const gap = textSize * 0.8;
 
+                        // Layout constants to prevent overlap
+                        const arrowBaseOffset = 60; // Move arrows further from node
+                        const arrowLen = 20;
+
                         if (Math.abs(rx) > eps) {
-                            const offset = -45; 
-                            const startX = offset;
-                            const endX = offset + (rx > 0 ? 15 : -15); 
+                            const startX = -arrowBaseOffset;
+                            const endX = startX + (rx > 0 ? arrowLen : -arrowLen); 
                             ctx.beginPath(); ctx.moveTo(startX, 0); ctx.lineTo(endX, 0); ctx.stroke();
                             drawArrowHead(endX, 0, rx > 0 ? 0 : Math.PI, '#ef4444');
                             ctx.textAlign = 'right';
-                            ctx.fillText(`Rx: ${Math.abs(rx).toFixed(2)}kN`, offset - gap, -(textSize * 0.3));
+                            ctx.fillText(`Rx: ${Math.abs(rx).toFixed(2)}${units.force}`, startX - 5, -(textSize * 0.3));
                             ctx.textAlign = 'left'; 
                         }
                         if (Math.abs(ry) > eps) {
-                            const offset = 45; 
-                            const startY = offset;
-                            const endY = offset + (ry > 0 ? -15 : 15);
+                            const startY = arrowBaseOffset;
+                            const endY = startY + (ry > 0 ? -arrowLen : arrowLen);
                             ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(0, endY); ctx.stroke();
                             drawArrowHead(0, endY, ry > 0 ? -Math.PI/2 : Math.PI/2, '#ef4444');
-                            ctx.fillText(`Ry: ${Math.abs(ry).toFixed(2)}kN`, gap, offset + (textSize * 0.3));
+                            // Move Ry label to the left of the arrow to avoid Rm overlap
+                            ctx.textAlign = 'right';
+                            ctx.fillText(`Ry: ${Math.abs(ry).toFixed(2)}${units.force}`, -5, startY + (textSize * 0.3));
+                            ctx.textAlign = 'left';
                         }
                         if (Math.abs(rm) > eps) {
-                            const r = 25;
-                            ctx.fillText(`Rm: ${Math.abs(rm).toFixed(2)}kNm`, r + gap, -(r + gap));
-                            ctx.beginPath(); 
+                            const r = 35; // Increased radius
+                            // Position Rm text in top-right quadrant specifically
+                            ctx.textAlign = 'left';
+                            ctx.fillText(`Rm: ${Math.abs(rm).toFixed(2)}${units.mom}`, r * 0.7, -r * 0.7); 
+                            ctx.beginPath();
                             ctx.arc(0, 0, r, 0, rm > 0 ? -Math.PI/2 : Math.PI/2, rm > 0); 
                             ctx.stroke();
                             const tipAng = rm > 0 ? -Math.PI/2 : Math.PI/2;
@@ -1362,31 +1477,34 @@
                             ctx.lineWidth = 3;
                         }
 
+                        // ... inside nodeLoads loop ...
                         ctx.strokeStyle = color; ctx.fillStyle = color;
-                        const arrowScale = 2;
+                        
+                        // FIX: Fixed visual length
+                        const arrowLen = 30; 
                         const gap = textSize * 0.6;
                         
                         if(l.type === 'settlement') {
-                            let txt = "SETT: ";
-                            if(l.dx) txt += `dx=${l.dx}m `;
-                            if(l.dy) txt += `dy=${l.dy}m `;
-                            ctx.fillText(txt, p.x - (textSize * 2), p.y + (textSize + 10));
+                            // ... settlement drawing ...
                         } else {
                             if (l.fx != 0) { 
-                                const tipX = p.x + l.fx*arrowScale;
+                                const dir = l.fx > 0 ? 1 : -1;
+                                const tipX = p.x + dir * arrowLen;
                                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tipX, p.y); ctx.stroke(); 
                                 drawArrowHead(tipX, p.y, l.fx > 0 ? 0 : Math.PI, color);
                                 const txtOff = l.fx > 0 ? gap : -(textSize * 4); 
-                                ctx.fillText(`${l.fx}kN`, tipX + txtOff, p.y + (textSize * 0.3));
+                                ctx.fillText(`${l.fx}${units.force}`, tipX + txtOff, p.y + (textSize * 0.3));
                             }
                             if (l.fy != 0) { 
-                                const tipY = p.y - l.fy*arrowScale;
+                                const dir = l.fy > 0 ? 1 : -1;
+                                const tipY = p.y - dir * arrowLen;
                                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, tipY); ctx.stroke(); 
                                 drawArrowHead(p.x, tipY, l.fy > 0 ? -Math.PI/2 : Math.PI/2, color);
-                                ctx.fillText(`${l.fy}kN`, p.x + gap, tipY + (textSize * 0.3));
+                                ctx.fillText(`${l.fy}${units.force}`, p.x + gap, tipY + (textSize * 0.3));
                             }
                             if (l.m != 0) {
-                                ctx.fillText(`${l.m}kNm`, p.x + (textSize), p.y - (textSize));
+                                ctx.fillText(`${l.m}${units.mom}`, p.x + (textSize), p.y - (textSize));
+                                // Keep moment arc size constant
                                 ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, l.m > 0 ? -Math.PI/2 : Math.PI/2, l.m > 0); ctx.stroke();
                                 const tipAng = l.m > 0 ? -Math.PI/2 : Math.PI/2;
                                 drawArrowHead(p.x + 12*Math.cos(tipAng), p.y + 12*Math.sin(tipAng), tipAng + (l.m>0? -Math.PI/2 : Math.PI/2), color);
@@ -1422,7 +1540,11 @@
                     const p = toScreen(snapX, snapY);
                     
                     ctx.globalAlpha = 0.5; ctx.fillStyle = '#3b82f6'; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2*Math.PI); ctx.fill(); ctx.globalAlpha = 1.0;
-                    ctx.fillStyle = '#cbd5e1'; ctx.fillText(`(${snapX.toFixed(3)}, ${snapY.toFixed(3)})`, p.x + 10, p.y - 10);
+                    
+                    // Display normalized coordinates
+                    const dispX = snapX / units.grid_div;
+                    const dispY = snapY / units.grid_div;
+                    ctx.fillStyle = '#cbd5e1'; ctx.fillText(`(${dispX.toFixed(3)}, ${dispY.toFixed(3)})`, p.x + 10, p.y - 10);
                 }
                 if (tool === 'element' && selectedNode !== null) {
                     const n = nodes[selectedNode];
@@ -1658,17 +1780,18 @@
                 // 3. Hit Test Loads (Arrows/Text)
                 let clickedLoadIndex = null;
                 if (clickedNodeId === null) {
-                    // Reuse same logic from before, but prioritized after nodes
                     loads.forEach((l, index) => {
                         let hit = false;
+                        const fixedArrowLen = 30; // Match the drawing length
+                        
                         if (l.nodeId !== undefined) {
                             const n = nodes[l.nodeId];
                             if(n) {
                                 const p = toScreen(n.x, n.y);
                                 if (Math.sqrt((sx - p.x)**2 + (sy - p.y)**2) < 25) hit = true;
-                                // Check arrow tips
-                                if (l.fx && Math.abs(sx - (p.x + l.fx*2)) < 15 && Math.abs(sy - p.y) < 15) hit = true;
-                                if (l.fy && Math.abs(sx - p.x) < 15 && Math.abs(sy - (p.y - l.fy*2)) < 15) hit = true;
+                                // Check arrow tips using fixed length
+                                if (l.fx && Math.abs(sx - (p.x + (l.fx > 0 ? fixedArrowLen : -fixedArrowLen))) < 15 && Math.abs(sy - p.y) < 15) hit = true;
+                                if (l.fy && Math.abs(sx - p.x) < 15 && Math.abs(sy - (p.y - (l.fy > 0 ? fixedArrowLen : -fixedArrowLen))) < 15) hit = true;
                             }
                         } else if (l.elementId !== undefined) {
                             // Simplified: Check if click is near the beam the load is on
@@ -1731,20 +1854,20 @@
                         <div className="absolute z-30 bg-slate-800/95 border border-slate-500 p-2 rounded shadow-xl text-[10px] pointer-events-none whitespace-nowrap"
                              style={{ left: hoverData.x + 15, top: hoverData.y + 15 }}>
                             <div className="font-bold text-slate-300 border-b border-slate-600 mb-1 pb-1">
-                                {t('el_det')} {hoverData.elId} @ {hoverData.x_loc.toFixed(2)}m
+                                {t('el_det')} {hoverData.elId} @ {(hoverData.x_loc / units.grid_div).toFixed(2)}{units.grid_label}
                             </div>
                             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
                                 <span className="text-red-400">{t('moment')}:</span>
-                                <span className="font-mono text-right">{hoverData.mx.toFixed(2)} kNm</span>
+                                <span className="font-mono text-right">{hoverData.mx.toFixed(2)} {units.mom}</span>
                                 
                                 <span className="text-blue-400">{t('shear')}:</span>
-                                <span className="font-mono text-right">{hoverData.vx.toFixed(2)} kN</span>
+                                <span className="font-mono text-right">{hoverData.vx.toFixed(2)} {units.force}</span>
 
                                 <span className="text-pink-400">{t('axial')}:</span>
-                                <span className="font-mono text-right">{hoverData.ax.toFixed(2)} kN</span>
+                                <span className="font-mono text-right">{hoverData.ax.toFixed(2)} {units.force}</span>
                                 
                                 <span className="text-emerald-400">{t('defl')}:</span>
-                                <span className="font-mono text-right">{(hoverData.disp * 1000).toFixed(2)} mm</span>
+                                <span className="font-mono text-right">{(hoverData.disp * 1000).toFixed(2)} {units.len}</span>
                             </div>
                             <div className="mt-1 pt-1 border-t border-slate-600 text-slate-400 grid grid-cols-2 gap-x-4">
                                 <span className="text-red-300">Max M: {hoverData.maxM.toFixed(1)}</span>
@@ -1766,16 +1889,16 @@
                         <div className={`absolute bottom-4 right-4 z-20 p-3 rounded text-xs shadow-lg pointer-events-none backdrop-blur-md ${isDarkMode ? 'bg-slate-800/90 text-slate-200 border border-slate-600' : 'bg-white/90 text-gray-700 border border-gray-200'}`}>
                             <h4 className={`font-bold mb-1 border-b pb-1 ${isDarkMode ? 'border-slate-600' : 'border-gray-300'}`}>{t('global_ext')}</h4>
                             {viewSettings.showBMD && (
-                                <div className="text-red-500 font-mono">{t('max_m')}: {plotData.stats.maxM.toFixed(2)} kNm</div>
+                                <div className="text-red-500 font-mono">{t('max_m')}: {plotData.stats.maxM.toFixed(2)} {units.mom}</div>
                             )}
                             {viewSettings.showSFD && (
-                                <div className="text-blue-500 font-mono">{t('max_v')}: {plotData.stats.maxV.toFixed(2)} kN</div>
+                                <div className="text-blue-500 font-mono">{t('max_v')}: {plotData.stats.maxV.toFixed(2)} {units.force}</div>
                             )}
                             {viewSettings.showAFD && (
-                                <div className="text-pink-500 font-mono">{t('max_a')}: {plotData.stats.maxA.toFixed(2)} kN</div>
+                                <div className="text-pink-500 font-mono">{t('max_a')}: {plotData.stats.maxA.toFixed(2)} {units.force}</div>
                             )}
                             {viewSettings.showDeformed && (
-                                <div className="text-emerald-600 font-mono">{t('max_d')}: {plotData.stats.maxD.toExponential(2)} m</div>
+                                <div className="text-emerald-600 font-mono">{t('max_d')}: {plotData.stats.maxD.toExponential(2)} {units.len}</div>
                             )}
                         </div>
                     )}
@@ -1786,7 +1909,7 @@
         // TIER 2.5: UI COMPONENTS (MODALS)
         // ==========================================
 
-        const LoadModal = ({ loadConfig, onConfirm, onCancel, isDarkMode, t }) => { 
+        const LoadModal = ({ loadConfig, onConfirm, onCancel, isDarkMode, t, units = {force:'kN', mom:'kNm', len:'m'} }) => {
             // Reuse the professional logic from uiClasses but defined locally for the modal's specific structure
             const inputClass = isDarkMode 
                 ? "bg-slate-900/50 border-slate-600 text-slate-200 w-full rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 border transition-colors" 
@@ -1815,21 +1938,22 @@
                                 {data.elementId !== undefined ? `${t('beam')} ${data.elementId}` : `${t('node')} ${data.nodeId}`}
                             </span>
                         </div>
+
                             {/* NODAL POINT */}
                             {data.type === 'point' && (
                                 <>
                                     <div className="grid grid-cols-2 gap-2 mb-2">
                                         <div>
-                                            <label className="text-[10px] text-slate-500">Fx (kN)</label>
+                                            <label className="text-[10px] text-slate-500">Fx ({units.force})</label>
                                             <input type="number" className={inputClass} value={data.fx} onChange={e=>update('fx', e.target.value)} />
                                         </div>
                                         <div>
-                                            <label className="text-[10px] text-slate-500">Fy (kN)</label>
+                                            <label className="text-[10px] text-slate-500">Fy ({units.force})</label>
                                             <input type="number" className={inputClass} value={data.fy} onChange={e=>update('fy', e.target.value)} />
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] text-slate-500">{t('moment')} (kNm)</label>
+                                        <label className="text-[10px] text-slate-500">{t('moment')} ({units.mom})</label>
                                         <input type="number" className={inputClass} value={data.m} onChange={e=>update('m', e.target.value)} />
                                     </div>
                                 </>
@@ -1840,7 +1964,7 @@
                                 <>
                                     <div className="grid grid-cols-2 gap-2 mb-2">
                                         <div>
-                                            <label className="text-[10px] text-slate-500">{t('mag')} (kN)</label>
+                                            <label className="text-[10px] text-slate-500">{t('mag')} ({units.force})</label>
                                             <input type="number" className={inputClass} value={data.mag} onChange={e=>update('mag', e.target.value)} />
                                         </div>
                                         <div>
@@ -1857,7 +1981,7 @@
                                     </div>
 
                                     <div>
-                                        <label className="text-[10px] text-slate-500">{t('dist')} (m)</label>
+                                        <label className="text-[10px] text-slate-500">{t('dist')} ({units.len})</label>
                                         <input type="number" className={inputClass} value={data.dist} onChange={e=>update('dist', e.target.value)} />
                                     </div>
                                 </>
@@ -1869,11 +1993,11 @@
                                     <div className="grid grid-cols-2 gap-2 mb-2">
                                         <div>
                                             {/* Reuse 'mag' translation + manual Start/End labels */}
-                                            <label className="text-[10px] text-slate-500">{t('mag')} Start (kN/m)</label>
+                                            <label className="text-[10px] text-slate-500">{t('mag_start')} ({units.dist})</label>
                                             <input type="number" className={inputClass} value={data.wStart} onChange={e=>update('wStart', e.target.value)} />
                                         </div>
                                         <div>
-                                            <label className="text-[10px] text-slate-500">{t('mag')} End (kN/m)</label>
+                                            <label className="text-[10px] text-slate-500">{t('mag_end')} ({units.dist})</label>
                                             <input type="number" className={inputClass} value={data.wEnd} onChange={e=>update('wEnd', e.target.value)} />
                                         </div>
                                     </div>
@@ -1891,11 +2015,11 @@
                                     
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
-                                            <label className="text-[10px] text-slate-500">{t('dist_start')} (m)</label>
+                                            <label className="text-[10px] text-slate-500">{t('dist_start')} ({units.len})</label>
                                             <input type="number" className={inputClass} value={data.dStart} onChange={e=>update('dStart', e.target.value)} />
                                         </div>
                                         <div>
-                                            <label className="text-[10px] text-slate-500">{t('dist_end')} (m)</label>
+                                            <label className="text-[10px] text-slate-500">{t('dist_end')} ({units.len})</label>
                                             <input type="number" className={inputClass} value={data.dEnd} onChange={e=>update('dEnd', e.target.value)} />
                                         </div>
                                     </div>
@@ -1906,11 +2030,11 @@
                             {data.type === 'settlement' && (
                                 <div className="grid grid-cols-2 gap-2">
                                     <div>
-                                        <label className="text-[10px] text-slate-500">{t('lbl_dx')}</label>
+                                        <label className="text-[10px] text-slate-500">{t('lbl_dx')} ({units.len})</label>
                                         <input type="number" className={inputClass} value={data.dx} onChange={e=>update('dx', e.target.value)} />
                                     </div>
                                     <div>
-                                        <label className="text-[10px] text-slate-500">{t('lbl_dy')}</label>
+                                        <label className="text-[10px] text-slate-500">{t('lbl_dy')} ({units.len})</label>
                                         <input type="number" className={inputClass} value={data.dy} onChange={e=>update('dy', e.target.value)} />
                                     </div>
                                 </div>
@@ -1918,13 +2042,93 @@
                         </div>
 
                         <div className="flex gap-2">
-                            <button onClick={onCancel} className="flex-1 bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded">Cancel</button>
-                            <button onClick={() => onConfirm(data)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-xs py-2 rounded font-bold">Apply Load</button>
+                            <button onClick={onCancel} className="flex-1 bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded">{t('cancel')}</button>
+                            <button onClick={() => onConfirm(data)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-xs py-2 rounded font-bold">{t('apply')}</button>
                         </div>
                     </div>
                 </div>
             );
         };
+        // ADD START: Beam Property Modal
+        const BeamModal = ({ beamConfig, onConfirm, onCancel, isDarkMode, t, units, sectionLibrary }) => {
+            const inputClass = isDarkMode 
+                ? "bg-slate-900/50 border-slate-600 text-slate-200 w-full rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 border transition-colors" 
+                : "bg-gray-50 border-gray-300 text-gray-900 w-full rounded px-2 py-1.5 text-xs focus:outline-none focus:bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 border transition-colors";
+
+            const [data, setData] = useState({ ...beamConfig });
+            const update = (field, val) => setData(prev => ({ ...prev, [field]: parseFloat(val) || 0 }));
+
+            // Helper to load from library within modal
+            const applySection = (idx) => {
+                if(idx === "") return;
+                const sec = sectionLibrary[idx];
+                setData(prev => ({...prev, E: sec.E, I: sec.I, A: sec.A}));
+            };
+
+            return (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="bg-slate-800 border border-slate-600 p-4 rounded shadow-2xl w-80">
+                        {/* MODIFY START: Dynamic Title */}
+                        <h3 className="text-sm font-bold mb-3 border-b border-gray-500 pb-2 text-blue-400">
+                            {t('edit')} {t('beam_title')} {data.id}
+                        </h3>
+                        {/* MODIFY END */}
+                        
+                        <div className="space-y-3 mb-4">
+                            {/* Section Library Shortcut */}
+                            <div>
+                                {/* MODIFY START: Dynamic Label and Option */}
+                                <label className="text-[10px] text-slate-500 mb-1 block">{t('apply_preset')}</label>
+                                <select className={inputClass} onChange={(e) => applySection(e.target.value)} defaultValue="">
+                                    <option value="">{t('custom_select')}</option>
+                                    {sectionLibrary.map((sec, i) => (
+                                        <option key={i} value={i}>{sec.name}</option>
+                                    ))}
+                                </select>
+                                {/* MODIFY END */}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-[10px] text-slate-500">{t('area')} ({units.area})</label>
+                                    <input type="number" className={inputClass} value={data.A.toExponential(3)} onChange={e=>update('A', e.target.value)} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-500">{t('inertia')} ({units.inert})</label>
+                                    <input type="number" className={inputClass} value={data.I.toExponential(3)} onChange={e=>update('I', e.target.value)} />
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label className="text-[10px] text-slate-500">{t('elastic')} ({units.stress})</label>
+                                <input type="number" className={inputClass} value={data.E} onChange={e=>update('E', e.target.value)} />
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] text-slate-500">{t('self_wt')} ({units.dist})</label>
+                                <input type="number" className={inputClass} value={data.selfWeight} onChange={e=>update('selfWeight', e.target.value)} />
+                            </div>
+
+                            <div className="flex items-center gap-2 mt-2 bg-slate-900 p-2 rounded border border-slate-700">
+                                {/* MODIFY START: Dynamic Label */}
+                                <label className="text-[10px] text-slate-400">{t('type_lbl')}</label>
+                                {/* MODIFY END */}
+                                <button onClick={()=>setData(p=>({...p, type:'rigid'}))} className={`text-[10px] px-2 py-0.5 rounded ${data.type==='rigid'?'bg-blue-600 text-white':'bg-slate-700 text-slate-400'}`}>{t('normal')}</button>
+                                <button onClick={()=>setData(p=>({...p, type:'truss'}))} className={`text-[10px] px-2 py-0.5 rounded ${data.type==='truss'?'bg-blue-600 text-white':'bg-slate-700 text-slate-400'}`}>{t('truss')}</button>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                            {/* MODIFY START: Dynamic Buttons */}
+                            <button onClick={onCancel} className="flex-1 bg-slate-700 hover:bg-slate-600 text-xs py-2 rounded">{t('cancel')}</button>
+                            <button onClick={() => onConfirm(data)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-xs py-2 rounded font-bold text-white">{t('save')}</button>
+                            {/* MODIFY END */}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        // ADD END
         // ==========================================
         // TIER 2: CONTROLLER (REACT APP)
         // ==========================================
@@ -1938,13 +2142,13 @@
                 shape: "Shape",
                 saved_sec: "Saved Sections",
                 col_name: "Name",
-                col_A: "Area (m²)",
-                col_I: "Inertia (m⁴)",
-                col_E: "E (GPa)",
+                col_A: "Area",
+                col_I: "Inertia",
+                col_E: "E",
                 sel_sec: "Select Section...",
                 save_sec: "Save Section",
                 sec_name: "Section Name",
-                dims: "Dimensions (mm)",
+                dims: "Dimensions",
                 depth: "Depth (d)",
                 width: "Width (b)",
                 web_thk: "Web Thk (tw)",
@@ -1973,8 +2177,13 @@
                 sett_supp: "Support Settings",
                 sett_load: "Load Settings",
                 title: "WebFEA - 2D Frame Analysis",
-                load_portal: "Load Portal Frame Demo",
-                load_truss: "Load Truss Bridge Demo",
+                load_portal: "Load Portal Frame",
+                load_truss: "Load Truss Bridge",
+                load_gable: "Load Gable Frame",
+                load_highrise: "Load High-Rise (5-Story)",
+                load_continuous: "Load Continuous Beam",
+                load_cantilever: "Load Cantilever",
+                load_arch: "Load Segmented Arch",
                 save: "Save",
                 load: "Load",
                 clear: "Clear All",
@@ -2062,9 +2271,9 @@
                 prop: "Prop",
                 res: "Res",
                 new_prop: "New Beam Properties",
-                elastic: "Elastic Modulus (GPa)",
-                inertia: "Moment of Inertia (m4)",
-                area: "Area (m2)",
+                elastic: "Elastic Modulus",
+                inertia: "Moment of Inertia",
+                area: "Area",
                 dist: "Distance",
                 ref: "Ref",
                 global: "Global",
@@ -2083,8 +2292,8 @@
                 angle_deg: "Angle °",
                 click_to_apply: "Click nodes on canvas to apply.",
                 loads_count: "Loads active",
-                lbl_dx: "DX (m)",
-                lbl_dy: "DY (m)",
+                lbl_dx: "DX",
+                lbl_dy: "DY",
                 undo_tip: "Undo (Ctrl+Z)",
                 redo_tip: "Redo (Ctrl+Y)",
                 toggle_theme_tip: "Toggle Theme",
@@ -2103,25 +2312,45 @@
                 res_node_disp: "Node Displacements",
                 res_support_react: "Support Reactions",
                 res_col_node: "Node",
-                res_col_dx: "Δx (mm)",
-                res_col_dy: "Δy (mm)",
-                res_col_theta: "θ (rad)",
-                res_col_rx: "Rx (kN)",
-                res_col_ry: "Ry (kN)",
-                res_col_rm: "Rm (kNm)",
+                res_col_dx: "Δx",
+                res_col_dy: "Δy",
+                res_col_rx: "Rx",
+                res_col_ry: "Ry",
+                res_col_rm: "Rm",
+                mag_start: "Mag Start",
+                mag_end: "Mag End",
+                edit: "Edit",
+                delete: "Delete",
+                edit_props: "Edit / Props",
+                apply_preset: "Apply Section Preset",
+                custom_select: "Custom / Select...",
+                type_lbl: "Type:",
+                load_title: "Load",
+                beam_title: "Beam",
+                unit_si: "SI (kN, m)",
+                unit_si_small: "SI (N, mm)",
+                unit_metric_m: "Metric (kgf, m)",
+                unit_metric_cm: "Metric (kgf, cm)",
+                unit_metric_t: "Metric (t, m)",
+                unit_imperial: "Imperial (k, ft)",
             },
             zh: {
                 sec_lib: "斷面庫",
+                // ... existing translations ...
+                dist_end: "結束距離",
+                // ADD/VERIFY these lines:
+                cancel: "取消",
+                apply: "套用載重",
                 shape: "斷面形狀",
                 saved_sec: "已存斷面",
                 col_name: "名稱",
-                col_A: "面積 (m²)",
-                col_I: "慣性矩 (m⁴)",
-                col_E: "彈性模數 (GPa)",
+                col_A: "面積",
+                col_I: "慣性矩",
+                col_E: "彈性模數",
                 sel_sec: "選擇斷面...",
                 save_sec: "儲存斷面",
                 sec_name: "斷面名稱",
-                dims: "尺寸 (mm)",
+                dims: "尺寸",
                 depth: "深度 (d)",
                 width: "寬度 (b)",
                 web_thk: "腹板厚 (tw)",
@@ -2152,6 +2381,11 @@
                 title: "WebFEA - 二維框架分析",
                 load_portal: "載入剛架範例",
                 load_truss: "載入桁架橋範例",
+                load_gable: "載入山形構架 (Gable)",
+                load_highrise: "載入高層建築 (5層)",
+                load_continuous: "載入連續梁",
+                load_cantilever: "載入懸臂梁",
+                load_arch: "載入拱形結構",
                 save: "儲存專案",
                 load: "載入專案",
                 clear: "清除全部",
@@ -2239,9 +2473,9 @@
                 prop: "屬性",
                 res: "結果",
                 new_prop: "新梁屬性",
-                elastic: "彈性模數 (GPa)",
-                inertia: "慣性矩 (m4)",
-                area: "斷面積 (m2)",
+                elastic: "彈性模數",
+                inertia: "慣性矩",
+                area: "斷面積",
                 dist: "距離",
                 ref: "參考座標",
                 global: "全域",
@@ -2260,8 +2494,8 @@
                 angle_deg: "角度 °",
                 click_to_apply: "在畫布上點擊節點以套用。",
                 loads_count: "個有效載重",
-                lbl_dx: "X方向位移 (m)",
-                lbl_dy: "Y方向位移 (m)",
+                lbl_dx: "X位移",
+                lbl_dy: "Y位移",
                 undo_tip: "復原 (Ctrl+Z)",
                 redo_tip: "重做 (Ctrl+Y)",
                 toggle_theme_tip: "切換主題",
@@ -2280,12 +2514,27 @@
                 res_node_disp: "節點位移",
                 res_support_react: "支承反力",
                 res_col_node: "節點",
-                res_col_dx: "Δx (mm)",
-                res_col_dy: "Δy (mm)",
-                res_col_theta: "θ (rad)",
-                res_col_rx: "Rx (kN)",
-                res_col_ry: "Ry (kN)",
-                res_col_rm: "Rm (kNm)",
+                res_col_dx: "Δx",
+                res_col_dy: "Δy",
+                res_col_rx: "Rx",
+                res_col_ry: "Ry",
+                res_col_rm: "Rm",
+                mag_start: "起始載重",
+                mag_end: "結束載重",
+                edit: "編輯",
+                delete: "刪除",
+                edit_props: "編輯 / 屬性",
+                apply_preset: "套用預設斷面",
+                custom_select: "自訂 / 選擇...",
+                type_lbl: "類型:",
+                load_title: "載重",
+                beam_title: "構件",
+                unit_si: "國際單位 (kN, m)",
+                unit_si_small: "國際單位 (N, mm)",
+                unit_metric_m: "公制 (kgf, m)",
+                unit_metric_cm: "公制 (kgf, cm)",
+                unit_metric_t: "公制 (t, m)",
+                unit_imperial: "英制 (k, ft)",
             }
         };
         const Icon = React.memo(({ name, className }) => {
@@ -2330,6 +2579,47 @@
         const App = () => {
             const [isDarkMode, setIsDarkMode] = useState(true);
             const [lang, setLang] = useState('en');
+            
+            // ADD: Unit System State
+            const [unitIdx, setUnitIdx] = useState(0);
+            const unitSystems = [
+                { key: 'unit_si', name: 'SI (kN, m)', force: 'kN', len: 'm', mom: 'kNm', dist: 'kN/m', def: 'mm', sec: 'mm', stress: 'GPa', area: 'm²', inert: 'm⁴', f_mul: 1, l_mul: 1, s_mul: 1e6, grid_div: 1, grid_label: 'm' },
+                { key: 'unit_si_small', name: 'SI (N, mm)', force: 'N', len: 'mm', mom: 'Nmm', dist: 'N/mm', def: 'mm', sec: 'mm', stress: 'MPa', area: 'mm²', inert: 'mm⁴', f_mul: 1000, l_mul: 1000, s_mul: 1e3, grid_div: 1000, grid_label: 'm' },
+                { key: 'unit_metric_m', name: 'Metric (kgf, m)', force: 'kgf', len: 'm', mom: 'kgf·m', dist: 'kgf/m', def: 'mm', sec: 'mm', stress: 'kgf/m²', area: 'm²', inert: 'm⁴', f_mul: 101.97, l_mul: 1, s_mul: 101.97, grid_div: 1, grid_label: 'm' },
+                { key: 'unit_metric_cm', name: 'Metric (kgf, cm)', force: 'kgf', len: 'cm', mom: 'kgf·cm', dist: 'kgf/cm', def: 'cm', sec: 'cm', stress: 'kgf/cm²', area: 'cm²', inert: 'cm⁴', f_mul: 101.97, l_mul: 100, s_mul: 1.0197, grid_div: 100, grid_label: 'm' },
+                { key: 'unit_metric_t', name: 'Metric (t, m)', force: 't', len: 'm', mom: 'tm', dist: 't/m', def: 'mm', sec: 'mm', stress: 't/m²', area: 'm²', inert: 'm⁴', f_mul: 0.10197, l_mul: 1, s_mul: 0.10197, grid_div: 1, grid_label: 'm' },
+                { key: 'unit_imperial', name: 'Imperial (k, ft)', force: 'kip', len: 'ft', mom: 'k·ft', dist: 'k/ft', def: 'in', sec: 'in', stress: 'ksi', area: 'ft²', inert: 'ft⁴', f_mul: 0.2248, l_mul: 3.2808, s_mul: 0.000145, grid_div: 1, grid_label: 'ft' }
+            ];
+            const units = unitSystems[unitIdx];
+            const handleUnitChange = (newIdx) => {
+                const oldU = unitSystems[unitIdx];
+                const newU = unitSystems[newIdx];
+                
+                const f_ratio = newU.f_mul / oldU.f_mul;
+                const l_ratio = newU.l_mul / oldU.l_mul;
+                const m_ratio = f_ratio * l_ratio; 
+                const d_ratio = f_ratio / l_ratio; // Distributed load (F/L)
+                const s_ratio = f_ratio / (l_ratio * l_ratio); // Stress/Elasticity ratio
+
+                setNodes(prev => prev.map(n => ({ x: n.x * l_ratio, y: n.y * l_ratio })));
+                setElements(prev => prev.map(el => ({ 
+                    ...el, 
+                    E: el.E * s_ratio, 
+                    I: el.I * Math.pow(l_ratio, 4), 
+                    A: el.A * (l_ratio * l_ratio) 
+                })));
+                setLoads(prev => prev.map(l => ({
+                    ...l,
+                    fx: (l.fx || 0) * f_ratio, fy: (l.fy || 0) * f_ratio,
+                    m: (l.m || 0) * m_ratio, mag: (l.mag || 0) * f_ratio,
+                    wStart: (l.wStart || 0) * d_ratio, wEnd: (l.wEnd || 0) * d_ratio,
+                    dist: (l.dist || 0) * l_ratio, dStart: (l.dStart || 0) * l_ratio,
+                    dEnd: (l.dEnd || 0) * l_ratio, dx: (l.dx || 0) * l_ratio, dy: (l.dy || 0) * l_ratio
+                })));
+
+                setUnitIdx(newIdx);
+                setResults(null); 
+            };
             const t = (key) => TRANSLATIONS[lang][key] || key;
             // Dynamic Classes for UI Elements
             const uiClasses = {
@@ -2385,7 +2675,18 @@
             const [suppInput, setSuppInput] = useState({ type: 'fixed', angle: 0, nodeId: '' });
             const [loadType, setLoadType] = useState('point');
             const [pendingLoad, setPendingLoad] = useState(null);
-            
+            const [editingLoadIndex, setEditingLoadIndex] = useState(null);
+            const [pendingBeam, setPendingBeam] = useState(null);
+            const startEditBeam = (id) => {
+                const el = elements.find(e => e.id === id);
+                if(el) setPendingBeam(el);
+            };
+
+            const confirmBeam = (beamData) => {
+                addToHistory();
+                setElements(prev => prev.map(el => el.id === beamData.id ? beamData : el));
+                setPendingBeam(null);
+            };
             const [elemProp, setElemProp] = useState({ E: 200e6, I: 0.0001, A: 0.01, type: 'rigid', selfWeight: 0 });
             // [MODIFY] Section Library & Params
             // Defaults: E is stored in kPa (200 GPa = 200,000,000 kPa)
@@ -2551,6 +2852,10 @@
                     if ((e.ctrlKey || e.metaKey) && (e.key === 'y')) {
                         redo();
                     }
+                    if (e.key === 'Escape') {
+                        setSidebarOpen(false);
+                        setTool('pointer');
+                    }
                 };
                 window.addEventListener('keydown', handleKeyDown);
                 return () => window.removeEventListener('keydown', handleKeyDown);
@@ -2558,6 +2863,9 @@
 
             const handleCanvasInteract = ({ type, worldPos, snappedPos, nodeId, elementId, loadIndex }) => {
                 if (type !== 'click') return;
+                
+                // ADD: Auto-close sidebar on any canvas action
+                setSidebarOpen(false);
 
                 if (tool === 'node') {
                     const { x, y } = snappedPos;
@@ -2787,6 +3095,136 @@
                 setResults(null);
                 setTool('pointer');
             };
+            const loadGableFrame = () => {
+                // Gable Frame: 6m span, 4m eave height, 1.5m roof rise
+                setNodes([
+                    {x:0, y:0}, {x:6, y:0}, // Base: 0, 1
+                    {x:0, y:4}, {x:6, y:4}, // Eaves: 2, 3
+                    {x:3, y:5.5}            // Ridge: 4
+                ]);
+                const defaults = { E:200e9, I:0.0003, A:0.012, type:'rigid', selfWeight:0 };
+                setElements([
+                    {id:1, n1:0, n2:2, ...defaults}, // Left Col
+                    {id:2, n1:1, n2:3, ...defaults}, // Right Col
+                    {id:3, n1:2, n2:4, ...defaults}, // Left Rafter
+                    {id:4, n1:4, n2:3, ...defaults}  // Right Rafter
+                ]);
+                setSupports([
+                    {nodeId:0, rx:true, ry:true, rm:true, type:'fixed'},
+                    {nodeId:1, rx:true, ry:true, rm:true, type:'fixed'}
+                ]);
+                setLoads([
+                    {type:'dist', elementId:3, wStart:10, wEnd:10, angle:-90, angleRef:'local', dStart:0},
+                    {type:'dist', elementId:4, wStart:10, wEnd:10, angle:-90, angleRef:'local', dStart:0},
+                    {type:'point', nodeId:2, fx:15, fy:0, m:0} // Wind load
+                ]);
+                setResults(null); setTool('pointer');
+            };
+
+            const loadHighRise = () => {
+                // 3 Bays (5m each), 5 Stories (3.5m each)
+                const bays = 3, stories = 5;
+                const bayW = 5, storyH = 3.5;
+                let newNodes = [], newEls = [];
+                
+                // Generate Nodes
+                for(let j=0; j<=stories; j++) {
+                    for(let i=0; i<=bays; i++) {
+                        newNodes.push({x: i*bayW, y: j*storyH});
+                    }
+                }
+                
+                // Generate Elements
+                let elId = 1;
+                const defaults = { E:25e9, I:0.005, A:0.2, type:'rigid', selfWeight:0 }; // Concrete
+                
+                // Horizontal Beams
+                for(let j=1; j<=stories; j++) {
+                    for(let i=0; i<bays; i++) {
+                        const n1 = j*(bays+1) + i;
+                        newEls.push({id:elId++, n1: n1, n2: n1+1, ...defaults});
+                    }
+                }
+                // Vertical Columns
+                for(let j=0; j<stories; j++) {
+                    for(let i=0; i<=bays; i++) {
+                        const n1 = j*(bays+1) + i;
+                        const n2 = (j+1)*(bays+1) + i;
+                        newEls.push({id:elId++, n1: n1, n2: n2, ...defaults});
+                    }
+                }
+
+                // Supports (Fixed at base)
+                let newSupps = [];
+                for(let i=0; i<=bays; i++) newSupps.push({nodeId: i, rx:true, ry:true, rm:true, type:'fixed'});
+
+                // Lateral Wind Load on left side
+                let newLoads = [];
+                for(let j=1; j<=stories; j++) {
+                    newLoads.push({type:'point', nodeId: j*(bays+1), fx: 10 + j*5, fy:0, m:0}); // Increasing wind load
+                }
+
+                setNodes(newNodes); setElements(newEls); setSupports(newSupps); setLoads(newLoads);
+                setResults(null); setTool('pointer');
+            };
+
+            const loadContinuousBeam = () => {
+                // 3 Spans of 6m
+                setNodes([{x:0, y:0}, {x:6, y:0}, {x:12, y:0}, {x:18, y:0}]);
+                const defaults = { E:200e9, I:0.0002, A:0.01, type:'rigid', selfWeight:0 };
+                setElements([
+                    {id:1, n1:0, n2:1, ...defaults},
+                    {id:2, n1:1, n2:2, ...defaults},
+                    {id:3, n1:2, n2:3, ...defaults}
+                ]);
+                setSupports([
+                    {nodeId:0, rx:true, ry:true, rm:false, type:'pin'},
+                    {nodeId:1, rx:false, ry:true, rm:false, type:'roller'},
+                    {nodeId:2, rx:false, ry:true, rm:false, type:'roller'},
+                    {nodeId:3, rx:false, ry:true, rm:false, type:'roller'}
+                ]);
+                setLoads([
+                    {type:'dist', elementId:1, wStart:20, wEnd:20, angle:-90, angleRef:'global'}, // Uniform
+                    {type:'point_span', elementId:2, mag:50, dist:3, angle:-90, angleRef:'global'}, // Point Center
+                    {type:'dist', elementId:3, wStart:20, wEnd:0, angle:-90, angleRef:'global'} // Triangular
+                ]);
+                setResults(null); setTool('pointer');
+            };
+
+            const loadCantilever = () => {
+                setNodes([{x:0, y:0}, {x:4, y:0}]);
+                setElements([{id:1, n1:0, n2:1, E:200e9, I:0.0002, A:0.01, type:'rigid', selfWeight:0}]);
+                setSupports([{nodeId:0, rx:true, ry:true, rm:true, type:'fixed'}]);
+                setLoads([{type:'point', nodeId:1, fx:0, fy:-10, m:0}]);
+                setResults(null); setTool('pointer');
+            };
+            
+            const loadArch = () => {
+                 // Segmented Arch (Semi-circle approx)
+                 const radius = 5;
+                 const segments = 10;
+                 let newNodes = [];
+                 let newEls = [];
+                 const defaults = { E:200e9, I:0.0002, A:0.01, type:'rigid', selfWeight:0 };
+
+                 for(let i=0; i<=segments; i++) {
+                     const theta = Math.PI - (i/segments) * Math.PI; // 180 to 0
+                     newNodes.push({
+                         x: radius + radius * Math.cos(theta),
+                         y: radius * Math.sin(theta)
+                     });
+                     if(i > 0) {
+                         newEls.push({id:i, n1:i-1, n2:i, ...defaults});
+                     }
+                 }
+                 setNodes(newNodes); setElements(newEls);
+                 setSupports([
+                     {nodeId:0, rx:true, ry:true, rm:false, type:'pin'},
+                     {nodeId:segments, rx:true, ry:true, rm:false, type:'pin'}
+                 ]);
+                 setLoads([{type:'point', nodeId: Math.floor(segments/2), fx:0, fy:-50}]); // Crown load
+                 setResults(null); setTool('pointer');
+            };
             const deleteNode = (index) => {
                 addToHistory();
                 // 1. Remove Node
@@ -2869,8 +3307,20 @@
             // Called by the Modal when user clicks "Apply"
             const confirmLoad = (loadData) => {
                 addToHistory();
-                setLoads(prev => [...prev, loadData]);
+                if (editingLoadIndex !== null) {
+                    setLoads(prev => prev.map((l, i) => i === editingLoadIndex ? loadData : l));
+                    setEditingLoadIndex(null);
+                } else {
+                    setLoads(prev => [...prev, loadData]);
+                }
+                // MODIFY END
                 setPendingLoad(null); // Close modal
+            };
+            const startEditLoad = (index) => {
+                const l = loads[index];
+                if(!l) return;
+                setEditingLoadIndex(index);
+                setPendingLoad(l); // Open modal with existing data
             };
             // [ADD] Calculate Element Stats for Table
             const elementStats = useMemo(() => {
@@ -2899,9 +3349,24 @@
                         let Vx = res.shearStart;
                         let Ax = res.axial;
 
-                        // 2. Add Loads
-                        const elLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
+                        // MODIFY START: Add Self-Weight to Stats Calculation
+                        const userLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
+                        const elLoads = [...userLoads];
+                        if (el.selfWeight && Math.abs(el.selfWeight) > 1e-9) {
+                            elLoads.push({
+                                type: 'dist',
+                                elementId: el.id,
+                                wStart: el.selfWeight,
+                                wEnd: el.selfWeight,
+                                dStart: 0,
+                                dEnd: L,
+                                angle: -90,
+                                angleRef: 'global'
+                            });
+                        }
+
                         elLoads.forEach(l => {
+                        // MODIFY END
                             const rawAng = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
                             const beamAng = Math.atan2(dy, dx);
                             let effectiveAng = rawAng;
@@ -2986,6 +3451,22 @@
                                     <button onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')} className={`p-2 rounded-lg transition-all font-bold text-xs ${uiClasses.buttonInactive}`} title={t('toggle_lang')}>
                                         {lang === 'en' ? '中' : 'EN'}
                                     </button>
+                                    {/* Unit Selection Dropdown */}
+                                    <div className="flex items-center ml-1">
+                                        <select 
+                                            value={unitIdx} 
+                                            onChange={(e) => handleUnitChange(parseInt(e.target.value))}
+                                            className={`p-1.5 rounded-lg text-[10px] font-bold border focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors ${
+                                                isDarkMode ? 'bg-slate-900 border-slate-600 text-blue-400' : 'bg-white border-gray-300 text-blue-600'
+                                            }`}
+                                        >
+                                            {/* MODIFY START: Use translation key */}
+                                            {unitSystems.map((sys, i) => (
+                                                <option key={i} value={i}>{t(sys.key)}</option>
+                                            ))}
+                                            {/* MODIFY END */}
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
 
@@ -3040,8 +3521,62 @@
                         {/* DYNAMIC DELETE OPTIONS (Now Below Toolbar) */}
                         {/* Changed: flex-col to flex-row to hang horizontally below the bar */}
                         <div className="flex flex-row gap-2 mt-2 pointer-events-auto">
-                            {/* CASE A: Node Selected AND has Support */}
-                            {selectedNode !== null && supports.some(s => s.nodeId === selectedNode) ? (
+                            {/* ADD START: Load Selection Context */}
+                                {selectedLoad !== null && (
+                                    <div className="bg-slate-700 p-2 rounded border border-slate-600 shadow-sm mt-2">
+                                        <div className="flex justify-between items-center text-xs text-yellow-200 px-1 mb-2">
+                                            <span className="font-bold">{t('load')} {selectedLoad}</span>
+                                            <button onClick={() => setSelectedLoad(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => startEditLoad(selectedLoad)} 
+                                                // CHANGED: text-[10px] -> text-xs, added px-3
+                                                className="flex-1 bg-slate-600 hover:bg-slate-500 text-white text-xs py-2 px-3 rounded flex items-center justify-center gap-2 font-bold shadow-sm whitespace-nowrap"
+                                            >
+                                                <Icon name="settings-2" className="w-4 h-4" /> {t('edit')}
+                                            </button>
+                                            <button 
+                                                onClick={deleteSelectedLoad} 
+                                                // CHANGED: text-[10px] -> text-xs, added px-3
+                                                className="flex-1 bg-red-600 hover:bg-red-500 text-white text-xs py-2 px-3 rounded flex items-center justify-center gap-2 font-bold shadow-sm whitespace-nowrap"
+                                            >
+                                                <Icon name="trash-2" className="w-4 h-4" /> {t('delete')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                {/* ADD END */}
+                                {/* ADD START: Beam Selection Context (Floating) */}
+                                {selectedElement !== null && (
+                                    <div className="bg-slate-700 p-2 rounded border border-slate-600 shadow-sm mt-2">
+                                        <div className="flex justify-between items-center text-xs text-blue-200 px-1 mb-2">
+                                            <span className="font-bold">{t('beam')} {selectedElement}</span>
+                                            <button onClick={() => setSelectedElement(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => startEditBeam(selectedElement)} 
+                                                // CHANGED: text-[10px] -> text-xs, added px-3
+                                                className="flex-1 bg-slate-600 hover:bg-slate-500 text-white text-xs py-2 px-3 rounded flex items-center justify-center gap-2 font-bold shadow-sm whitespace-nowrap"
+                                                title="Edit Beam"
+                                            >
+                                                <Icon name="settings-2" className="w-4 h-4" /> {t('edit')}
+                                            </button>
+                                            <button 
+                                                onClick={() => deleteElement(selectedElement)} 
+                                                // CHANGED: text-[10px] -> text-xs, added px-3
+                                                className="flex-1 bg-red-600 hover:bg-red-500 text-white text-xs py-2 px-3 rounded flex items-center justify-center gap-2 font-bold shadow-sm whitespace-nowrap"
+                                                title="Delete Beam"
+                                            >
+                                                <Icon name="trash-2" className="w-4 h-4" /> {t('delete')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* CASE A: Node Selected AND has Support */}
+                                {selectedNode !== null && supports.some(s => s.nodeId === selectedNode) ? (
                                 <>
                                     <button 
                                         onClick={() => deleteNode(selectedNode)}
@@ -3066,11 +3601,12 @@
                                     </button>
                                 </>
                             ) : (
-                                /* CASE B: Standard Delete */
-                                (selectedNode !== null || selectedElement !== null || selectedLoad !== null) && (
+                                /* CASE B: Standard Delete (Only for Nodes or fallback) */
+                                /* MODIFY: Only show if NOT Load or Element (since they have their own panels now) */
+                                (selectedNode !== null && selectedElement === null && selectedLoad === null) && (
                                     <button 
-                                        onClick={deleteSelection}
-                                        className="bg-red-600 hover:bg-red-500 text-white p-2 sm:p-3 rounded-xl shadow-xl border border-red-500 transition-all"
+                                        onClick={deleteSelection} 
+                                        className="bg-red-600 hover:bg-red-500 text-white p-2 sm:p-3 rounded-xl shadow-xl border border-red-500 transition-all w-full flex justify-center"
                                         title={t('del_sel')}
                                     >
                                         <Icon name="trash-2" className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -3152,7 +3688,6 @@
                                         </div>
                                     </div>
                                 )}
-
                             </div>
                         </div>
                     )}
@@ -3264,12 +3799,33 @@
                                 <input type="file" ref={fileInputRef} onChange={handleFileLoad} className="hidden" accept=".json" />
                             </div>
                             
-                            <button onClick={loadDemo} className={`w-full text-xs py-3 rounded-lg font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600' : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 shadow-sm'}`}>
-                                {t('load_portal')}
-                            </button>
-                            <button onClick={loadTrussDemo} className={`w-full text-xs py-3 rounded-lg font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600' : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 shadow-sm'}`}>
-                                {t('load_truss')}
-                            </button>
+                            {/* MODIFY START: Enhanced Template Section */}
+                            <div className="space-y-2">
+                                <label className={`text-[10px] uppercase font-bold tracking-wider ${uiClasses.textMuted}`}>Templates</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button onClick={loadCantilever} className={`text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
+                                        {t('load_cantilever')}
+                                    </button>
+                                    <button onClick={loadContinuousBeam} className={`text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
+                                        {t('load_continuous')}
+                                    </button>
+                                    <button onClick={loadDemo} className={`text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
+                                        {t('load_portal')}
+                                    </button>
+                                    <button onClick={loadGableFrame} className={`text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
+                                        {t('load_gable')}
+                                    </button>
+                                    <button onClick={loadTrussDemo} className={`text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
+                                        {t('load_truss')}
+                                    </button>
+                                    <button onClick={loadArch} className={`text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
+                                        {t('load_arch')}
+                                    </button>
+                                </div>
+                                <button onClick={loadHighRise} className={`w-full text-xs py-2 rounded font-medium transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-600' : 'bg-white hover:bg-gray-50 border-gray-200'} border`}>
+                                    {t('load_highrise')}
+                                </button>
+                            </div>
                             {/* ... (Keep existing Selection Actions Panel logic exactly as it was) ... */}
                             {(selectedNode !== null || selectedElement !== null) && (
                                 <div className="bg-slate-700 p-2 rounded border border-slate-600 shadow-sm">
@@ -3317,9 +3873,16 @@
                                                                 <span className="text-slate-300">
                                                                     {l.type === 'settlement' ? 'Settlement' : `Force: ${l.fx||0}, ${l.fy||0}`}
                                                                 </span>
-                                                                <button onClick={() => deleteLoad(index)} className="text-red-400 hover:text-red-300 p-1">
-                                                                    <Icon name="trash-2" className="w-3 h-3" />
-                                                                </button>
+                                                                {/* MODIFY START: Add Edit Button Group */}
+                                                                <div className="flex gap-1">
+                                                                    <button onClick={() => startEditLoad(index)} className="text-blue-400 hover:text-blue-300 p-1" title="Edit Load">
+                                                                        <Icon name="settings-2" className="w-3 h-3" />
+                                                                    </button>
+                                                                    <button onClick={() => deleteLoad(index)} className="text-red-400 hover:text-red-300 p-1" title="Delete Load">
+                                                                        <Icon name="trash-2" className="w-3 h-3" />
+                                                                    </button>
+                                                                </div>
+                                                                {/* MODIFY END */}
                                                             </div>
                                                         );
                                                     })}
@@ -3331,14 +3894,37 @@
                                         </>
                                     )}
                                     
+                                    {/* MODIFY START: Updated Beam Selection Context with Edit/Delete */}
                                     {selectedElement !== null && (
-                                        <>
-                                            <div className={`flex justify-between items-center text-xs text-blue-200 px-1 ${selectedNode !== null ? 'border-t border-slate-600 pt-2 mt-1' : ''}`}>
-                                                <span>Beam {selectedElement}</span>
-                                                <button onClick={() => setSelectedElement(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
-                                            </div>
-                                            
-                                            {/* Element Info Display */}
+                                    <>
+                                        <div className={`flex justify-between items-center text-xs text-blue-200 px-1 ${selectedNode !== null ? 'border-t border-slate-600 pt-2 mt-1' : ''}`}>
+                                            {/* MODIFY START */}
+                                            <span className="font-bold text-blue-400">{t('beam_title')} {selectedElement}</span>
+                                            {/* MODIFY END */}
+                                            <button onClick={() => setSelectedElement(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
+                                        </div>
+                                        
+                                        <div className="flex gap-2 mt-2 mb-2">
+                                            <button 
+                                                onClick={() => { setTool('element'); }} 
+                                                className="flex-1 bg-slate-600 hover:bg-slate-500 text-white text-[10px] py-1.5 rounded flex items-center justify-center gap-1 shadow-sm"
+                                                title={t('edit_props')} // Update title
+                                            >
+                                                {/* MODIFY START */}
+                                                <Icon name="settings-2" className="w-3 h-3" /> {t('edit_props')}
+                                                {/* MODIFY END */}
+                                            </button>
+                                            <button 
+                                                onClick={() => deleteElement(selectedElement)} 
+                                                className="flex-1 bg-red-900/80 hover:bg-red-800 text-red-100 text-[10px] py-1.5 rounded flex items-center justify-center gap-1 shadow-sm"
+                                                title={t('delete')} // Update title
+                                            >
+                                                {/* MODIFY START */}
+                                                <Icon name="trash-2" className="w-3 h-3" /> {t('delete')}
+                                                {/* MODIFY END */}
+                                            </button>
+                                        </div>
+                                            {/* Element Info Display (Read Only) */}
                                             {(() => {
                                                 const el = elements.find(e => e.id === selectedElement);
                                                 if (!el) return null;
@@ -3347,41 +3933,13 @@
                                                 const n2 = nodes[el.n2];
                                                 const L = Math.sqrt(Math.pow(n2.x - n1.x, 2) + Math.pow(n2.y - n1.y, 2));
                                                 
-                                                // Find matching section from library
-                                                const matchedSec = sectionLibrary.find(sec => 
-                                                    Math.abs(sec.E - el.E) < 1e3 && 
-                                                    Math.abs(sec.I - el.I) < 1e-8 && 
-                                                    Math.abs(sec.A - el.A) < 1e-6
-                                                );
-                                                
                                                 return (
                                                     <div className="mt-2 p-2 bg-slate-900/50 rounded border border-slate-700 text-[10px] space-y-1">
-                                                        <div className="font-bold text-blue-300 mb-2 border-b border-slate-700 pb-1">{t('el_info')}</div>
-                                                        
                                                         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                                                            <span className="text-slate-400">{t('sec_used')}:</span>
-                                                            <span className="text-slate-200 font-mono">{matchedSec ? matchedSec.name : t('no_sec')}</span>
-                                                            
-                                                            <span className="text-slate-400">{t('area')}:</span>
-                                                            <span className="text-slate-200 font-mono">{el.A.toExponential(2)} m²</span>
-                                                            
-                                                            <span className="text-slate-400">{t('inertia')}:</span>
-                                                            <span className="text-slate-200 font-mono">{el.I.toExponential(2)} m⁴</span>
-                                                            
-                                                            <span className="text-slate-400">{t('elastic')}:</span>
-                                                            <span className="text-slate-200 font-mono">{(el.E / 1e9).toFixed(0)} GPa</span>
-                                                            
                                                             <span className="text-slate-400">{t('length')}:</span>
                                                             <span className="text-slate-200 font-mono">{L.toFixed(3)} m</span>
-                                                            
-                                                            <span className="text-slate-400">{t('self_wt')}:</span>
-                                                            <span className="text-slate-200 font-mono">{el.selfWeight || 0} kN/m</span>
-                                                            
-                                                            <span className="text-slate-400">{t('node_1')}:</span>
-                                                            <span className="text-slate-200 font-mono">{el.n1}</span>
-                                                            
-                                                            <span className="text-slate-400">{t('node_2')}:</span>
-                                                            <span className="text-slate-200 font-mono">{el.n2}</span>
+                                                            <span className="text-slate-400">{t('el_type')}:</span>
+                                                            <span className="text-slate-200 font-mono capitalize">{t(el.type)}</span>
                                                         </div>
                                                     </div>
                                                 );
@@ -3518,8 +4076,8 @@
                                                         <thead className={`text-[9px] sticky top-0 ${isDarkMode ? 'bg-slate-800' : 'bg-gray-100'} ${uiClasses.textMuted}`}>
                                                             <tr>
                                                                 <th className="p-1.5 font-normal">{t('res_col_node')}</th>
-                                                                <th className="p-1.5 font-normal text-right">{t('res_col_dx')}</th>
-                                                                <th className="p-1.5 font-normal text-right">{t('res_col_dy')}</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_col_dx')}({units.def})</th>
+                                                                <th className="p-1.5 font-normal text-right">{t('res_col_dy')}({units.def})</th>
                                                                 <th className="p-1.5 font-normal text-right">{t('res_col_theta')}</th>
                                                             </tr>
                                                         </thead>
@@ -3553,9 +4111,9 @@
                                                             <thead className={`text-[9px] sticky top-0 ${isDarkMode ? 'bg-slate-800' : 'bg-gray-100'} ${uiClasses.textMuted}`}>
                                                                 <tr>
                                                                     <th className="p-1.5 font-normal">{t('res_col_node')}</th>
-                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_rx')}</th>
-                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_ry')}</th>
-                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_rm')}</th>
+                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_rx')} ({units.force})</th>
+                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_ry')} ({units.force})</th>
+                                                                    <th className="p-1.5 font-normal text-right">{t('res_col_rm')} ({units.mom})</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody className={`text-[9px] font-mono ${isDarkMode ? 'text-slate-400' : 'text-gray-600'}`}>
@@ -3612,7 +4170,7 @@
                                             </div>
 
                                             <div className="flex justify-between items-center mb-2">
-                                                <label className={`text-[10px] font-bold ${uiClasses.textMuted}`}>{t('dims')}</label>
+                                                <label className={`text-[10px] font-bold ${uiClasses.textMuted}`}>{t('dims')} ({units.sec})</label>
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-2 mb-2">
@@ -3673,12 +4231,12 @@
 
                                             {/* E Input */}
                                             <div>
-                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('elastic')}</label>
-                                                <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none border ${uiClasses.input}`} value={elemProp.E / 1e6} onChange={e => setElemProp({ ...elemProp, E: (parseFloat(e.target.value) || 0) * 1e6 })} />
+                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('elastic')} ({units.stress}) ({units.stress})</label>
+                                                <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none border ${uiClasses.input}`} value={elemProp.E} onChange={e => setElemProp({ ...elemProp, E: parseFloat(e.target.value) || 0 })} />
                                             </div>
                                             {/* Self-Weight Input */}
                                             <div>
-                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('self_wt')}</label>
+                                                <label className={`text-xs block mb-1 ${uiClasses.textMuted}`}>{t('self_wt')} ({units.dist})</label>
                                                 <input type="number" className={`w-full rounded px-2 py-1 text-xs focus:outline-none border ${uiClasses.input}`} value={elemProp.selfWeight} onChange={e => setElemProp({ ...elemProp, selfWeight: parseFloat(e.target.value) || 0 })} />
                                             </div>
 
@@ -3686,15 +4244,14 @@
                                             <div className={`grid grid-cols-2 gap-3 p-3 rounded-lg border ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-gray-50 border-gray-200'}`}>
                                                 <div className="flex flex-col">
                                                     <span className={`text-[9px] uppercase tracking-wider mb-1 ${uiClasses.textMuted}`}>{t('inertia')}</span>
-                                                    <span className={`font-mono text-xs font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{Number(elemProp.I).toExponential(3)} m⁴</span>
+                                                    <span className={`font-mono text-xs font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{Number(elemProp.I).toExponential(3)} {units.inert}</span>
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <span className={`text-[9px] uppercase tracking-wider mb-1 ${uiClasses.textMuted}`}>{t('area')}</span>
-                                                    <span className={`font-mono text-xs font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{Number(elemProp.A).toExponential(3)} m²</span>
+                                                    <span className={`font-mono text-xs font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{Number(elemProp.A).toExponential(3)} {units.area}</span>
                                                 </div>
                                             </div>
                                         </div>
-
                                         {/* 4. SAVE SECTION */}
                                         <div className="flex gap-2 items-end pt-2 border-t border-slate-700/50">
                                             <div className="flex-1">
@@ -3715,9 +4272,9 @@
                                                 <thead className={`text-[10px] ${uiClasses.textMuted}`}>
                                                     <tr>
                                                         <th className="p-2 font-normal">{t('col_name')}</th>
-                                                        <th className="p-2 font-normal">{t('col_A')}</th>
-                                                        <th className="p-2 font-normal">{t('col_I')}</th>
-                                                        <th className="p-2 font-normal text-right">{t('col_E')}</th>
+                                                        <th className="p-2 font-normal">{t('col_A')} ({units.area})</th>
+                                                        <th className="p-2 font-normal">{t('col_I')} ({units.inert})</th>
+                                                        <th className="p-2 font-normal text-right">{t('col_E')} ({units.stress})</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className={`text-[10px] font-mono ${isDarkMode ? 'text-slate-400' : 'text-gray-600'}`}>
@@ -3751,7 +4308,7 @@
                         </div>
                         {/* Sidebar Footer (Status) */}
                         <div className={`p-4 border-t ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-gray-200 bg-gray-50'}`}>
-                             {error ? (
+                            {error ? (
                                 <div className="text-red-400 text-xs font-bold flex items-center gap-2"><Icon name="alert-triangle" className="w-4 h-4" /> {error}</div>
                             ) : (
                                 <div className="text-emerald-400 text-xs font-bold flex items-center gap-2"><Icon name="check-circle" className="w-4 h-4" /> {t('auto_solved')}</div>
@@ -3760,8 +4317,7 @@
                     </div>
 
                     {/* 4. Canvas Container */}
-                    <div className="w-full h-full">
-                        {/* [MODIFY] Pass 'selectedLoad' as a prop */}
+                    <div className="w-full h-full" onMouseEnter={() => setSidebarOpen(false)}>
                         <CanvasView 
                             nodes={nodes} 
                             elements={elements} 
@@ -3772,24 +4328,39 @@
                             tool={tool} 
                             selectedNode={selectedNode} 
                             selectedElement={selectedElement} 
-                            selectedLoad={selectedLoad} // <--- ADD THIS
+                            selectedLoad={selectedLoad}
                             onCanvasInteract={handleCanvasInteract} 
                             textSize={textSize} 
                             isDarkMode={isDarkMode}
                             t={t}
+                            units={units}
                         />
                     </div>
 
-                    {/* Modals remain the same */}
                     {pendingLoad && (
                         <LoadModal 
                             loadConfig={pendingLoad} 
                             onConfirm={confirmLoad} 
-                            onCancel={() => setPendingLoad(null)} 
-                            isDarkMode={isDarkMode} // <--- PASS PROP
+                            onCancel={() => { setPendingLoad(null); setEditingLoadIndex(null); }} 
+                            isDarkMode={isDarkMode}
                             t={t}
+                            units={units} 
                         />
                     )}
+                    
+                    {/* ADD START */}
+                    {pendingBeam && (
+                        <BeamModal 
+                            beamConfig={pendingBeam}
+                            onConfirm={confirmBeam}
+                            onCancel={() => setPendingBeam(null)}
+                            isDarkMode={isDarkMode}
+                            t={t}
+                            units={units}
+                            sectionLibrary={sectionLibrary}
+                        />
+                    )}
+                    {/* ADD END */}
                 </div>
             );
         };
