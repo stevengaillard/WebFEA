@@ -40,11 +40,67 @@
         .tool-btn.inactive {
             @apply bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200;
         }
+        /* ADD START: Print Report Styles */
+        #print-staging { display: none; }
+
+        @media print {
+            /* Hide the main app and everything else */
+            body * {
+                visibility: hidden;
+            }
+
+            /* Make the print container visible */
+            #print-staging, #print-staging * {
+                visibility: visible;
+            }
+
+            /* Position the print container at the top left */
+            #print-staging {
+                display: block !important;
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                background: white;
+                color: black;
+                padding: 10mm;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 10pt;
+                z-index: 9999;
+            }
+
+            .page-break { break-before: page; }
+            
+            /* Print Specific Styling */
+            .rpt-header { border-bottom: 3px solid #0891b2; padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; }
+            .rpt-title { color: #0891b2; font-size: 20pt; font-weight: bold; margin: 0; }
+            .rpt-subtitle { font-size: 10pt; color: #555; }
+            
+            h2 { font-size: 12pt; background: #f1f5f9; padding: 5px 10px; border-left: 4px solid #0891b2; margin-top: 20px; font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            h3 { font-size: 11pt; color: #0891b2; border-bottom: 1px solid #e2e8f0; margin-top: 15px; font-weight: bold; }
+            
+            table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 9pt; }
+            th { background-color: #0891b2 !important; color: white !important; padding: 5px; font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            td { border: 1px solid #cbd5e1; padding: 5px; text-align: center; }
+            tr:nth-child(even) { background-color: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            
+            .text-right { text-align: right; }
+            .font-mono { font-family: 'JetBrains Mono', monospace; }
+            
+            .matrix-wrapper { overflow-x: auto; padding: 5px; margin-bottom: 10px; }
+            .matrix-table td { padding: 2px 5px; border: none; text-align: right; font-size: 7pt; }
+            .mat-bracket-l { border-left: 2px solid #000; border-top: 2px solid #000; border-bottom: 2px solid #000; width: 6px; }
+            .mat-bracket-r { border-right: 2px solid #000; border-top: 2px solid #000; border-bottom: 2px solid #000; width: 6px; }
+            
+            .img-snap { max-width: 100%; height: 300px; object-fit: contain; border: 1px solid #eee; margin: 10px 0; }
+        }
+    </style>
     </style>
 </head>
 <body>
 
     <div id="root"></div>
+    <div id="print-staging"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo, useCallback } = React;
@@ -2334,6 +2390,34 @@
                 unit_metric_t: "Metric (t, m)",
                 unit_imperial: "Imperial (k, ft)",
                 templates: "Templates",
+                btn_report: "Print Report",
+                rpt_title: "Calculation Report",
+                rpt_sub: "2D Frame Analysis (Stiffness Method)",
+                rpt_node_res: "Nodal Results (Displacements)",
+                rpt_el_res: "Member Forces",
+                rpt_react: "Reactions",
+                rpt_app: "Appendix A: Stiffness Matrices (Detailed)",
+                rpt_k_local: "Local Stiffness Matrix [k']",
+                rpt_trans: "Transformation Matrix [T]",
+                rpt_k_global: "Global Stiffness Matrix [k]",
+                rpt_sample: "Sample Calculation: Element",
+                rpt_img_model: "Model Geometry",
+                rpt_img_bmd: "Bending Moment Diagram",
+                rpt_col_id: "ID",
+                rpt_col_n1: "Node 1",
+                rpt_col_n2: "Node 2",
+                rpt_col_e: "E",
+                rpt_col_a: "A",
+                rpt_col_i: "I",
+                rpt_col_node: "Node",
+                rpt_col_dx: "DX",
+                rpt_col_dy: "DY",
+                rpt_col_rot: "Rotation",
+                rpt_col_axial: "Axial",
+                rpt_col_v_start: "Shear Start",
+                rpt_col_v_end: "Shear End",
+                rpt_col_m_start: "Mom Start",
+                rpt_col_m_end: "Mom End",
             },
             zh: {
                 sec_lib: "斷面庫",
@@ -2537,6 +2621,34 @@
                 unit_metric_t: "公制 (t, m)",
                 unit_imperial: "英制 (k, ft)",
                 templates: "結構範本",
+                btn_report: "列印計算書",
+                rpt_title: "結構計算書",
+                rpt_sub: "二維框架分析 (勁度法)",
+                rpt_node_res: "節點結果 (位移)",
+                rpt_el_res: "構件內力",
+                rpt_react: "支承反力",
+                rpt_app: "附錄 A: 勁度矩陣詳解",
+                rpt_k_local: "局部勁度矩陣 [k']",
+                rpt_trans: "轉換矩陣 [T]",
+                rpt_k_global: "全域勁度矩陣 [k]",
+                rpt_sample: "計算範例: 單元",
+                rpt_img_model: "結構模型圖",
+                rpt_img_bmd: "彎矩圖",
+                rpt_col_id: "編號",
+                rpt_col_n1: "節點 1",
+                rpt_col_n2: "節點 2",
+                rpt_col_e: "彈性模數 E",
+                rpt_col_a: "面積 A",
+                rpt_col_i: "慣性矩 I",
+                rpt_col_node: "節點",
+                rpt_col_dx: "水平位移 DX",
+                rpt_col_dy: "垂直位移 DY",
+                rpt_col_rot: "轉角",
+                rpt_col_axial: "軸力",
+                rpt_col_v_start: "起始剪力",
+                rpt_col_v_end: "終點剪力",
+                rpt_col_m_start: "起始彎矩",
+                rpt_col_m_end: "終點彎矩",
             }
         };
         const Icon = React.memo(({ name, className }) => {
@@ -3426,6 +3538,197 @@
                     };
                 });
             }, [results, elements, nodes, loads]);
+            // ADD START: Report Generation Logic
+            const renderMatrixHTML = (mat, dim) => {
+                let html = '<table class="matrix-table">';
+                for(let i=0; i<dim; i++) {
+                    html += '<tr><td class="mat-bracket-l"></td>';
+                    for(let j=0; j<dim; j++) {
+                        let val = mat[i][j];
+                        // Format: Zero check and precision
+                        let valStr = Math.abs(val) < 1e-10 ? "0" : (Math.abs(val) > 1000 ? val.toExponential(2) : val.toFixed(2));
+                        let style = Math.abs(val) > 1e-10 ? "font-weight:bold;" : "color:#ccc;";
+                        html += `<td style="${style}">${valStr}</td>`;
+                    }
+                    html += '<td class="mat-bracket-r"></td></tr>';
+                }
+                html += '</table>';
+                return html;
+            };
+
+            const generateReport = () => {
+                if (!results) return alert("Please solve the structure first.");
+                
+                // 1. Capture Canvas Snapshot
+                const canvas = document.querySelector('canvas');
+                // Use white background for image if transparent
+                const imgData = canvas ? canvas.toDataURL('image/png') : '';
+                
+                const dateStr = new Date().toLocaleString(lang === 'en' ? 'en-US' : 'zh-TW');
+
+                let html = `
+                    <div class="rpt-header">
+                        <div>
+                            <h1 class="rpt-title">${t('rpt_title')}</h1>
+                            <div class="rpt-subtitle">${t('rpt_sub')}</div>
+                        </div>
+                        <div style="text-align:right">
+                            <div><strong>Date:</strong> ${dateStr}</div>
+                            <div><strong>Nodes:</strong> ${nodes.length} | <strong>Elements:</strong> ${elements.length}</div>
+                        </div>
+                    </div>
+
+                    <div style="text-align:center; border:1px solid #eee; margin-bottom:20px;">
+                        <img src="${imgData}" class="img-snap" />
+                        <div style="font-size:9pt; color:#666; padding:5px;">${t('rpt_img_model')} / Results</div>
+                    </div>
+
+                    <h2>${t('geo')} / ${t('prop')}</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>${t('rpt_col_id')}</th>
+                                <th>${t('rpt_col_n1')}</th>
+                                <th>${t('rpt_col_n2')}</th>
+                                <th>${t('rpt_col_e')} (${units.stress})</th>
+                                <th>${t('rpt_col_a')} (${units.area})</th>
+                                <th>${t('rpt_col_i')} (${units.inert})</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${elements.map(e => `
+                                <tr>
+                                    <td>${e.id}</td>
+                                    <td>${e.n1}</td>
+                                    <td>${e.n2}</td>
+                                    <td>${e.E.toExponential(2)}</td>
+                                    <td>${e.A.toExponential(2)}</td>
+                                    <td>${e.I.toExponential(2)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+
+                    <h2>${t('rpt_node_res')}</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>${t('rpt_col_node')}</th>
+                                <th>${t('rpt_col_dx')} (${units.def})</th>
+                                <th>${t('rpt_col_dy')} (${units.def})</th>
+                                <th>${t('rpt_col_rot')} (rad)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${nodes.map((_, i) => {
+                                // Convert m to user's def unit (e.g. mm)
+                                const dx = results.displacements[3*i] * units.f_mul; 
+                                const dy = results.displacements[3*i+1] * units.f_mul;
+                                const r = results.displacements[3*i+2];
+                                return `<tr><td>${i}</td><td>${(dx*1000).toFixed(3)}</td><td>${(dy*1000).toFixed(3)}</td><td>${r.toExponential(3)}</td></tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+
+                    <h2>${t('rpt_el_res')}</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>${t('rpt_col_id')}</th>
+                                <th>${t('rpt_col_axial')} (${units.force})</th>
+                                <th>${t('rpt_col_v_start')} (${units.force})</th>
+                                <th>${t('rpt_col_v_end')} (${units.force})</th>
+                                <th>${t('rpt_col_m_start')} (${units.mom})</th>
+                                <th>${t('rpt_col_m_end')} (${units.mom})</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${results.memberForces.map(f => `
+                                <tr>
+                                    <td>${f.id}</td>
+                                    <td>${f.axial.toFixed(2)}</td>
+                                    <td>${f.shearStart.toFixed(2)}</td>
+                                    <td>${f.shearEnd.toFixed(2)}</td>
+                                    <td>${f.moment1.toFixed(2)}</td>
+                                    <td>${f.moment2.toFixed(2)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+
+                // Detailed Calculation
+                if (elements.length > 0) {
+                    const el = elements[0]; 
+                    const n1 = nodes[el.n1];
+                    const n2 = nodes[el.n2];
+                    const dx = n2.x - n1.x; const dy = n2.y - n1.y;
+                    const L = Math.sqrt(dx*dx + dy*dy);
+                    const c = dx/L; const s = dy/L;
+                    const {E, A, I} = el;
+                    
+                    const k1 = (E*A)/L;
+                    const k2 = (12*E*I)/(L*L*L);
+                    const k3 = (6*E*I)/(L*L);
+                    const k4 = (4*E*I)/L;
+                    const k5 = (2*E*I)/L;
+                    
+                    const k_local = [
+                        [k1, 0, 0, -k1, 0, 0],
+                        [0, k2, k3, 0, -k2, k3],
+                        [0, k3, k4, 0, -k3, k5],
+                        [-k1, 0, 0, k1, 0, 0],
+                        [0, -k2, -k3, 0, k2, -k3],
+                        [0, k3, k5, 0, -k3, k4]
+                    ];
+
+                    const T = [
+                        [c, s, 0, 0, 0, 0], [-s, c, 0, 0, 0, 0], [0, 0, 1, 0, 0, 0],
+                        [0, 0, 0, c, s, 0], [0, 0, 0, -s, c, 0], [0, 0, 0, 0, 0, 1]
+                    ];
+                    
+                    const k_global = Matrix.multiply(Matrix.multiply(Matrix.transpose(T), k_local), T);
+
+                    html += `
+                        <div class="page-break"></div>
+                        <h2>${t('rpt_app')}</h2>
+                        <div style="background:#f8fafc; padding:10px; border:1px solid #ddd;">
+                            <h3>${t('rpt_sample')} ${el.id} (Node ${el.n1} -> ${el.n2})</h3>
+                            <p>L = ${L.toFixed(3)}m, Angle = ${(Math.atan2(dy,dx)*180/Math.PI).toFixed(1)}°</p>
+                            
+                            <h4>${t('rpt_k_local')} (6x6)</h4>
+                            <div class="matrix-wrapper font-mono text-xs">
+                                ${renderMatrixHTML(k_local, 6)}
+                            </div>
+
+                            <h4>${t('rpt_trans')} (6x6)</h4>
+                            <div class="matrix-wrapper font-mono text-xs">
+                                ${renderMatrixHTML(T, 6)}
+                            </div>
+
+                            <h4>${t('rpt_k_global')} = [T]<sup>T</sup> [k'] [T]</h4>
+                            <div class="matrix-wrapper font-mono text-xs">
+                                ${renderMatrixHTML(k_global, 6)}
+                            </div>
+                        </div>
+                        <div style="text-align:center; margin-top:20px; color:#888; font-size:8pt;">
+                            Generated by WebFEA
+                        </div>
+                    `;
+                }
+
+                // Inject and Print
+                const staging = document.getElementById('print-staging');
+                staging.innerHTML = html;
+                
+                // Small timeout to ensure DOM update and image render before print dialog
+                setTimeout(() => {
+                    window.print();
+                    // Optional: Clear after print to avoid accidental flashing
+                    // staging.innerHTML = ''; 
+                }, 100);
+            };
+            // ADD END
             return (
                 <div className="relative h-screen w-screen bg-slate-900 text-slate-100 font-sans overflow-hidden">
                     {/* [ADD] 2. Floating Tools - Top Right (Mobile Friendly) */}
@@ -3510,8 +3813,17 @@
 
                             <div className="h-6 w-px bg-slate-700/50 mx-1 shrink-0"></div>
 
-                            {/* Right Group: Display Options */}
+                            {/* ADD START: Print Report Button */}
                             <button 
+                                onClick={generateReport} 
+                                className={`p-2 rounded-lg transition-all shrink-0 text-slate-400 hover:bg-slate-700 hover:text-white`} 
+                                title={t('btn_report')}
+                            >
+                                <Icon name="printer" className="w-5 h-5" />
+                            </button>
+                            {/* ADD END */}
+
+                            <button
                                 onClick={() => setShowDisplayMenu(!showDisplayMenu)} 
                                 className={`p-2 rounded-lg transition-all shrink-0 ${showDisplayMenu ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-700'}`} 
                                 title={t('tool_opt')}
@@ -4362,7 +4674,6 @@
                             sectionLibrary={sectionLibrary}
                         />
                     )}
-                    {/* ADD END */}
                 </div>
             );
         };
