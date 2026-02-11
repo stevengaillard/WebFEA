@@ -432,6 +432,8 @@
                         angleRef: 'global'
                     });
                 }
+                let dispSpan = 0; 
+                const { E, I } = el;
                 elLoads.forEach(l => {
                     const rawAng = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
                     const n1 = nodes[el.n1], n2 = nodes[el.n2];
@@ -484,8 +486,17 @@
                 const h2 = x * (1 - 2*t + t*t);
                 const h3 = 3*t*t - 2*t*t*t;
                 const h4 = x * (t*t - t);
-                let disp = v1*h1 + th1*h2 + v2*h3 + th2*h4;
-                return { mx: Mx, vx: Vx, ax: Ax, disp };
+                const v_transverse_abs = v1*h1 + th1*h2 + v2*h3 + th2*h4 + dispSpan;
+                const v_linear = v1 * (1-t) + v2 * t;
+                const rel_transverse = v_transverse_abs - v_linear;
+                const u1 = res.dispLocal[0];
+                const u2 = res.dispLocal[3];
+                const u_axial_abs = u1 * (1-t) + u2 * t;
+                const u_linear = u1 * (1-t) + u2 * t;
+                let disp = v_transverse_abs;
+                const relDisp = rel_transverse;
+                const totalDisp = Math.sqrt(u_axial_abs * u_axial_abs + v_transverse_abs * v_transverse_abs);
+                return { mx: Mx, vx: Vx, ax: Ax, disp, relDisp, totalDisp };
             };
             const gridStep = useMemo(() => {
                 if (zoom >= 40) {
@@ -512,26 +523,43 @@
                     const dx = n2.x - n1.x, dy = n2.y - n1.y;
                     const L = Math.sqrt(dx*dx + dy*dy);
                     const pts = [];
+                    let t_values = [];
                     const steps = 40; 
+                    for (let i = 0; i <= steps; i++) t_values.push(i / steps);
+                    const elLoads = loads.filter(l => l.elementId === el.id);
+                    elLoads.forEach(l => {
+                        if (l.type === 'point_span') {
+                            const dist = parseFloat(l.dist !== undefined ? l.dist : L/2);
+                            const t = Math.max(0, Math.min(1, dist / L));
+                            t_values.push(t);    
+                            t_values.push(t + 0.00001);
+                        } else if (l.type === 'dist') {
+                            const d1 = parseFloat(l.dStart || 0);
+                            const d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : L);
+                            t_values.push(Math.max(0, Math.min(1, d1/L)));
+                            t_values.push(Math.max(0, Math.min(1, d2/L)));
+                        }
+                    });
+                    t_values = [...new Set(t_values)].sort((a, b) => a - b).filter(t => t >= 0 && t <= 1.0001);
                     const u1 = res.dispLocal[0];
                     const u2 = res.dispLocal[3];
-                    for (let i = 0; i <= steps; i++) {
-                        const t = i / steps;
-                        const x = t * L;
+                    t_values.forEach(t => {
+                        const t_clamped = Math.min(1, t);
+                        const x = t_clamped * L;
                         const vals = getBeamValues(el, x, L);
                         const { mx, vx, ax, disp } = vals;
                         const v1 = res.dispLocal[1];
                         const v2 = res.dispLocal[4];
-                        const v_linear = v1 * (1-t) + v2 * t;
+                        const v_linear = v1 * (1-t_clamped) + v2 * t_clamped;
                         const v_disp = disp - v_linear;
                         if (Math.abs(mx) > maxM) maxM = Math.abs(mx);
                         if (Math.abs(vx) > maxV) maxV = Math.abs(vx);
                         if (Math.abs(ax) > maxA) maxA = Math.abs(ax);
-                        const ux = u1 * (1-t) + u2 * t; 
+                        const ux = u1 * (1-t_clamped) + u2 * t_clamped; 
                         const totalDisp = Math.sqrt(ux*ux + disp*disp);
                         if (totalDisp > maxD) maxD = totalDisp;
-                        pts.push({ t, mx, vx, ax, v_disp });
-                    }
+                        pts.push({ t: t_clamped, mx, vx, ax, v_disp });
+                    });
                     return { id: el.id, pts };
                 });
                 return { 
@@ -872,70 +900,114 @@
                             const dx = drawP2.x - drawP1.x, dy = drawP2.y - drawP1.y;
                             const L_scr = Math.sqrt(dx*dx + dy*dy);
                             const nx = -dy / L_scr, ny = dx / L_scr; 
+                            
                             const drawLabel = (t, val, unit, offsetPx, color, prefix = '') => {
-                                if (Math.abs(val) < 0.01) return; 
+                                if (Math.abs(val) < 0.001) return; 
                                 const lx = drawP1.x + t * dx + nx * offsetPx;
                                 const ly = drawP1.y + t * dy + ny * offsetPx;
                                 ctx.font = fontBold; 
                                 const valStr = Math.abs(val) > 10000 ? val.toExponential(2) : val.toFixed(2);
                                 const text = `${prefix}${valStr}${unit}`;
                                 const metrics = ctx.measureText(text);
-                                ctx.fillStyle = isDarkMode ? 'rgba(15, 23, 42, 0.7)' : 'rgba(255, 255, 255, 0.8)';
+                                ctx.fillStyle = isDarkMode ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.9)';
                                 const pad = 2;
                                 ctx.fillRect(lx + pad, ly - pad - textSize, metrics.width + pad*2, textSize + pad*2);
                                 ctx.fillStyle = color; 
                                 ctx.fillText(text, lx + pad*2, ly - pad);
                                 ctx.beginPath(); ctx.arc(lx, ly, 2, 0, 2*Math.PI); ctx.fill();
                             };
+
+                            // --- Bending Moment Diagram (BMD) ---
                             if (viewSettings.showBMD && el.type !== 'truss') {
                                 const scale = plotData.scales.m * viewSettings.diaScale * 50; 
                                 ctx.fillStyle = 'rgba(239, 68, 68, 0.2)'; ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
-                                let maxVal = 0, maxT = 0, maxOff = 0;
+                                
+                                let maxV = -Infinity, maxT = 0, maxOff = 0;
+                                let minV = Infinity, minT = 0, minOff = 0;
+
                                 d.pts.forEach(pt => {
-                                    const off = pt.mx * scale; 
-                                    if(Math.abs(pt.mx) > Math.abs(maxVal)) { maxVal = pt.mx; maxT = pt.t; maxOff = off; }
+                                    const val = pt.mx;
+                                    const off = val * scale; 
+                                    if (val > maxV) { maxV = val; maxT = pt.t; maxOff = off; }
+                                    if (val < minV) { minV = val; minT = pt.t; minOff = off; }
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
                                 drawLabel(0, d.pts[0].mx, units.mom, d.pts[0].mx*scale, '#fca5a5'); 
                                 drawLabel(1, d.pts[d.pts.length-1].mx, units.mom, d.pts[d.pts.length-1].mx*scale, '#fca5a5'); 
-                                if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, units.mom, maxOff, '#ffffff'); 
+                                if (maxT > 0.02 && maxT < 0.98) drawLabel(maxT, maxV, units.mom, maxOff, '#ffffff');
+                                if (minT > 0.02 && minT < 0.98 && Math.abs(minT - maxT) > 0.05) drawLabel(minT, minV, units.mom, minOff, '#ffffff');
                             }
                             if (viewSettings.showSFD && el.type !== 'truss') {
                                 const scale = plotData.scales.v * viewSettings.diaScale * 50;
                                 ctx.fillStyle = 'rgba(59, 130, 246, 0.2)'; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
-                                let maxVal = 0, maxT = 0, maxOff = 0;
+                                
+                                let maxV = -Infinity, maxT = 0, maxOff = 0;
+                                let minV = Infinity, minT = 0, minOff = 0;
+
                                 d.pts.forEach(pt => {
-                                    const off = -pt.vx * scale;
-                                    if(Math.abs(pt.vx) > Math.abs(maxVal)) { maxVal = pt.vx; maxT = pt.t; maxOff = off; }
+                                    const val = pt.vx;
+                                    const off = -val * scale;
+                                    if (val > maxV) { maxV = val; maxT = pt.t; maxOff = off; }
+                                    if (val < minV) { minV = val; minT = pt.t; minOff = off; }
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
+                                
                                 drawLabel(0, d.pts[0].vx, units.force, -d.pts[0].vx*scale, '#93c5fd'); 
                                 drawLabel(1, d.pts[d.pts.length-1].vx, units.force, -d.pts[d.pts.length-1].vx*scale, '#93c5fd');
-                                if(maxT > 0.05 && maxT < 0.95) drawLabel(maxT, maxVal, units.force, maxOff, '#ffffff');
+                                
+                                if (maxT > 0.02 && maxT < 0.98) drawLabel(maxT, maxV, units.force, maxOff, '#ffffff');
+                                if (minT > 0.02 && minT < 0.98 && Math.abs(minT - maxT) > 0.05) drawLabel(minT, minV, units.force, minOff, '#ffffff');
                             }
                             if (viewSettings.showAFD) {
                                 const scale = plotData.scales.a * viewSettings.diaScale * 50;
                                 ctx.fillStyle = 'rgba(236, 72, 153, 0.2)'; ctx.strokeStyle = '#ec4899'; ctx.lineWidth = 1;
                                 ctx.beginPath(); ctx.moveTo(drawP1.x, drawP1.y);
+                                
+                                let maxV = -Infinity, maxT = 0, maxOff = 0;
+                                let minV = Infinity, minT = 0, minOff = 0;
+
                                 d.pts.forEach(pt => {
-                                    const off = -pt.ax * scale; 
+                                    const val = pt.ax;
+                                    const off = -val * scale; 
+                                    if (val > maxV) { maxV = val; maxT = pt.t; maxOff = off; }
+                                    if (val < minV) { minV = val; minT = pt.t; minOff = off; }
                                     ctx.lineTo(drawP1.x + pt.t*dx + nx*off, drawP1.y + pt.t*dy + ny*off);
                                 });
                                 ctx.lineTo(drawP2.x, drawP2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
-                                drawLabel(0.5, d.pts[Math.floor(d.pts.length/2)].ax, units.force, -d.pts[Math.floor(d.pts.length/2)].ax * scale, '#f9a8d4'); 
+                                
+                                drawLabel(0, d.pts[0].ax, units.force, -d.pts[0].ax * scale, '#f9a8d4'); 
+                                drawLabel(1, d.pts[d.pts.length-1].ax, units.force, -d.pts[d.pts.length-1].ax * scale, '#f9a8d4'); 
+
+                                if (maxT > 0.02 && maxT < 0.98) drawLabel(maxT, maxV, units.force, maxOff, '#ffffff');
+                                if (minT > 0.02 && minT < 0.98 && Math.abs(minT - maxT) > 0.05) drawLabel(minT, minV, units.force, minOff, '#ffffff');
                             }
                             if(viewSettings.showDeformed && el.type !== 'truss') {
-                                let maxD = 0, maxT = 0;
-                                d.pts.forEach(pt => { if(Math.abs(pt.v_disp) > Math.abs(maxD)) { maxD = pt.v_disp; maxT = pt.t; } });
-                                if(Math.abs(maxD) > 0.0001) {
-                                    const s = plotData.scales.d * viewSettings.defScale * 50;
-                                    const off = -maxD * s; 
-                                    const defMult = units.grid_div === 1 ? 1000 : 1; 
-                                    drawLabel(maxT, maxD * defMult, units.def, off, '#34d399', 'δ: '); 
+                                let defMult = 1;
+                                if (units.len === 'm' && units.def === 'mm') defMult = 1000;
+                                else if (units.len === 'ft' && units.def === 'in') defMult = Math.sqrt(12);
+                                else if (units.len === 'm' && units.def === 'cm') defMult = 100;
+                                else if (units.len === 'cm' && units.def === 'mm') defMult = 10;
+                                else if (units.len === 'mm' && units.def === 'mm') defMult = Math.sqrt(1000);
+                                else if (units.len === 'cm' && units.def === 'cm') defMult = 100;
+                                else if (units.len === 'in' && units.def === 'in') defMult = 1;
+                                else if (units.len === 'ft' && units.def === 'ft') defMult = 1;
+                                let maxV = -Infinity, maxT = 0;
+                                let minV = Infinity, minT = 0;
+                                const s = plotData.scales.d * viewSettings.defScale * 50;
+                                d.pts.forEach(pt => { 
+                                    const val = pt.v_disp;
+                                    if (val > maxV) { maxV = val; maxT = pt.t; }
+                                    if (val < minV) { minV = val; minT = pt.t; }
+                                });
+                                if (Math.abs(maxV) > 1e-6 && maxT > 0.02 && maxT < 0.98) {
+                                    drawLabel(maxT, maxV * defMult * defMult, units.def, -maxV * s, '#34d399', 'δ: ');
+                                }
+                                if (Math.abs(minV) > 1e-6 && minT > 0.02 && minT < 0.98 && Math.abs(minT - maxT) > 0.05) {
+                                    drawLabel(minT, minV * defMult * defMult, units.def, -minV * s, '#34d399', 'δ: ');
                                 }
                             }
                         }
@@ -1454,9 +1526,20 @@
                                 <span className="font-mono text-right">{fmt(hoverData.vx)} {units.force}</span>
                                 <span className="text-pink-400">{t('axial')}:</span>
                                 <span className="font-mono text-right">{fmt(hoverData.ax)} {units.force}</span>
-                                <span className="text-emerald-400">{t('defl')}:</span>
-                                <span className="font-mono text-right">{fmt(hoverData.disp * 1000)} {units.len}</span>
+                                <div className="col-span-2 border-t border-slate-600 mt-1 pt-1">
+                                <div className="flex justify-between">
+                                    <span className="text-emerald-400">{t('defl')} {units.len}</span>
+                                    <span className="font-mono">{fmt(hoverData.relDisp * 1000)} {units.len}</span>
+                                </div>
+                                <div className="flex justify-between text-slate-400">
+                                    <span>Total Disp:</span>
+                                    <span className="font-mono">
+                                        {/* Now using the pre-calculated totalDisp from Step 1 */}
+                                        {fmt(hoverData.totalDisp * 1000)} {units.len}
+                                    </span>
+                                </div>
                             </div>
+                        </div>
                             <div className="mt-1 pt-1 border-t border-slate-600 text-slate-400 grid grid-cols-2 gap-x-4">
                                 <span className="text-red-300">Max M: {fmt(hoverData.maxM)}</span>
                                 <span className="text-red-300">Min M: {fmt(hoverData.minM)}</span>
