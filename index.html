@@ -1321,6 +1321,8 @@
                          // 1. Find members connected
                          const connectedMembers = results.memberForces.filter(mf => {
                             const el = elements.find(e => e.id === mf.id);
+                            // ADD SAFEGUARD: Check if el exists before accessing properties
+                            if (!el) return false; 
                             return el.n1 === sup.nodeId || el.n2 === sup.nodeId;
                         });
 
@@ -1328,6 +1330,9 @@
                         
                         connectedMembers.forEach(mf => {
                             const el = elements.find(e => e.id === mf.id);
+                            // ADD SAFEGUARD: Check if el exists
+                            if (!el) return;
+
                             if (el.n1 === sup.nodeId) {
                                 rx += mf.globalForces[0]; ry += mf.globalForces[1]; rm += mf.globalForces[2];
                             } else {
