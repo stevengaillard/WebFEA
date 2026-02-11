@@ -2169,7 +2169,7 @@
         const App = () => {
             const [isDarkMode, setIsDarkMode] = useState(true);
             const [lang, setLang] = useState('en');
-            const [unitIdx, setUnitIdx] = useState(0);
+            const [unitIdx, setUnitIdx] = useState(2);
             const unitSystems = [
                 { key: 'unit_si', name: 'SI (kN, m)', force: 'kN', len: 'm', mom: 'kNm', dist: 'kN/m', def: 'mm', sec: 'mm', stress: 'GPa', area: 'm²', inert: 'm⁴', f_mul: 1, l_mul: 1, s_mul: 1e6, grid_div: 1, grid_label: 'm' },
                 { key: 'unit_si_small', name: 'SI (N, mm)', force: 'N', len: 'mm', mom: 'Nmm', dist: 'N/mm', def: 'mm', sec: 'mm', stress: 'MPa', area: 'mm²', inert: 'mm⁴', f_mul: 1000, l_mul: 1000, s_mul: 1e3, grid_div: 1000, grid_label: 'm' },
@@ -2238,7 +2238,7 @@
             const [selectedNode, setSelectedNode] = useState(null);
             const [selectedElement, setSelectedElement] = useState(null);
             const [selectedLoad, setSelectedLoad] = useState(null);
-            const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, showLoads: true,defScale: 1, diaScale: 1 });
+            const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, showLoads: true, defScale: 1, diaScale: 1 });
             const [activeTab, setActiveTab] = useState('geo');
             const [textSize, setTextSize] = useState(11);
             const [suppInput, setSuppInput] = useState({ type: 'fixed', angle: 0, nodeId: '', kx: 0, ky: 10000, km: 0 });
@@ -2593,6 +2593,8 @@
                         if (data.supports) setSupports(data.supports);
                         if (data.loads) setLoads(data.loads);
                         if (data.viewSettings) setViewSettings(data.viewSettings);
+                        if (data.unitIdx !== undefined) setUnitIdx(data.unitIdx);
+                        if (data.textSize !== undefined) setTextSize(data.textSize);
                     } catch (e) {
                         console.error("Failed to restore autosave", e);
                     }
@@ -2601,11 +2603,11 @@
             }, []);
             useEffect(() => {
                 if (!isInitialized.current) return; 
-                const projectData = { nodes, elements, supports, loads, viewSettings };
+                const projectData = { nodes, elements, supports, loads, viewSettings, unitIdx, textSize };
                 localStorage.setItem('webfea_autosave', JSON.stringify(projectData));
-            }, [nodes, elements, supports, loads, viewSettings]);
+            }, [nodes, elements, supports, loads, viewSettings, unitIdx, textSize]);
             const saveProject = () => {
-                const projectData = { nodes, elements, supports, loads, viewSettings, version: '1.0' };
+                const projectData = { nodes, elements, supports, loads, viewSettings, unitIdx, textSize, version: '1.0' };
                 const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -2627,6 +2629,8 @@
                         setSupports(data.supports || []);
                         setLoads(data.loads || []);
                         if (data.viewSettings) setViewSettings(data.viewSettings);
+                        if (data.unitIdx !== undefined) setUnitIdx(data.unitIdx);
+                        if (data.textSize !== undefined) setTextSize(data.textSize);
                         setResults(null); 
                         addToHistory(); 
                     } catch (err) {
