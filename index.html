@@ -808,6 +808,7 @@
                 const canvas = canvasRef.current;
                 if (!canvas) return;
                 const ctx = canvas.getContext('2d');
+                const fmt = (n) => parseFloat(Number(n).toFixed(3));
                 // HELPER: Draw Arrowhead
                 const drawArrowHead = (x, y, angle, color) => {
                     ctx.save();
@@ -1110,7 +1111,8 @@
                             drawArrowHead(px, py, Math.atan2(py - tay, px - tax), baseColor);
                             
                             ctx.fillStyle = '#fef08a'; 
-                            ctx.fillText(`${mag}${units.force}`, tax, tay - (textSize * 0.5)); 
+                            // Applied fmt() wrapper
+                            ctx.fillText(`${fmt(mag)}${units.force}`, tax, tay - (textSize * 0.5)); 
                         }
                         else if (l.type === 'dist') {
                             // ... (keep dist calculation lines) ...
@@ -1169,8 +1171,9 @@
                             ctx.fill(); ctx.stroke();
 
                             ctx.fillStyle = '#fef08a'; 
-                            ctx.fillText(`${w1}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
-                            if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${w2}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
+                            // Applied fmt() wrapper
+                            ctx.fillText(`${fmt(w1)}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
+                            if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${fmt(w2)}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
                             
                             const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
                             for(let i=0; i<=count; i++) {
@@ -1587,24 +1590,27 @@
                         
                         if(l.type === 'settlement') {
                             // ... settlement drawing ...
-                        } else {
+} else {
                             if (l.fx != 0) { 
                                 const dir = l.fx > 0 ? 1 : -1;
                                 const tipX = p.x + dir * arrowLen;
                                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tipX, p.y); ctx.stroke(); 
                                 drawArrowHead(tipX, p.y, l.fx > 0 ? 0 : Math.PI, color);
                                 const txtOff = l.fx > 0 ? gap : -(textSize * 4); 
-                                ctx.fillText(`${l.fx}${units.force}`, tipX + txtOff, p.y + (textSize * 0.3));
+                                // Applied fmt()
+                                ctx.fillText(`${fmt(l.fx)}${units.force}`, tipX + txtOff, p.y + (textSize * 0.3));
                             }
                             if (l.fy != 0) { 
                                 const dir = l.fy > 0 ? 1 : -1;
                                 const tipY = p.y - dir * arrowLen;
                                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, tipY); ctx.stroke(); 
                                 drawArrowHead(p.x, tipY, l.fy > 0 ? -Math.PI/2 : Math.PI/2, color);
-                                ctx.fillText(`${l.fy}${units.force}`, p.x + gap, tipY + (textSize * 0.3));
+                                // Applied fmt()
+                                ctx.fillText(`${fmt(l.fy)}${units.force}`, p.x + gap, tipY + (textSize * 0.3));
                             }
                             if (l.m != 0) {
-                                ctx.fillText(`${l.m}${units.mom}`, p.x + (textSize), p.y - (textSize));
+                                // Applied fmt()
+                                ctx.fillText(`${fmt(l.m)}${units.mom}`, p.x + (textSize), p.y - (textSize));
                                 // Keep moment arc size constant
                                 ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, l.m > 0 ? -Math.PI/2 : Math.PI/2, l.m > 0); ctx.stroke();
                                 const tipAng = l.m > 0 ? -Math.PI/2 : Math.PI/2;
@@ -1941,7 +1947,7 @@
             }, [draw]);
 
             useEffect(() => { draw(); }, [draw]);
-
+            const fmt = (n) => parseFloat(n.toFixed(3));
             return (
                 <div className="flex-1 bg-slate-900 relative overflow-hidden h-full select-none">
                     <canvas ref={canvasRef} onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={() => {setIsDragging(false); setHoverData(null);}} 
@@ -1955,28 +1961,28 @@
                         <div className="absolute z-30 bg-slate-800/95 border border-slate-500 p-2 rounded shadow-xl text-[10px] pointer-events-none whitespace-nowrap"
                              style={{ left: hoverData.x + 15, top: hoverData.y + 15 }}>
                             <div className="font-bold text-slate-300 border-b border-slate-600 mb-1 pb-1">
-                                {t('el_det')} {hoverData.elId} @ {(hoverData.x_loc / units.grid_div).toFixed(2)}{units.grid_label}
+                                {t('el_det')} {hoverData.elId} @ {fmt(hoverData.x_loc / units.grid_div)}{units.grid_label}
                             </div>
                             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
                                 <span className="text-red-400">{t('moment')}:</span>
-                                <span className="font-mono text-right">{hoverData.mx.toFixed(2)} {units.mom}</span>
+                                <span className="font-mono text-right">{fmt(hoverData.mx)} {units.mom}</span>
                                 
                                 <span className="text-blue-400">{t('shear')}:</span>
-                                <span className="font-mono text-right">{hoverData.vx.toFixed(2)} {units.force}</span>
+                                <span className="font-mono text-right">{fmt(hoverData.vx)} {units.force}</span>
 
                                 <span className="text-pink-400">{t('axial')}:</span>
-                                <span className="font-mono text-right">{hoverData.ax.toFixed(2)} {units.force}</span>
+                                <span className="font-mono text-right">{fmt(hoverData.ax)} {units.force}</span>
                                 
                                 <span className="text-emerald-400">{t('defl')}:</span>
-                                <span className="font-mono text-right">{(hoverData.disp * 1000).toFixed(2)} {units.len}</span>
+                                <span className="font-mono text-right">{fmt(hoverData.disp * 1000)} {units.len}</span>
                             </div>
                             <div className="mt-1 pt-1 border-t border-slate-600 text-slate-400 grid grid-cols-2 gap-x-4">
-                                <span className="text-red-300">Max M: {hoverData.maxM.toFixed(1)}</span>
-                                <span className="text-red-300">Min M: {hoverData.minM.toFixed(1)}</span>
-                                <span className="text-blue-300">Max V: {hoverData.maxV.toFixed(1)}</span>
-                                <span className="text-blue-300">Min V: {hoverData.minV.toFixed(1)}</span>
-                                <span className="text-pink-300">Max A: {hoverData.maxA.toFixed(1)}</span>
-                                <span className="text-pink-300">Min A: {hoverData.minA.toFixed(1)}</span>
+                                <span className="text-red-300">Max M: {fmt(hoverData.maxM)}</span>
+                                <span className="text-red-300">Min M: {fmt(hoverData.minM)}</span>
+                                <span className="text-blue-300">Max V: {fmt(hoverData.maxV)}</span>
+                                <span className="text-blue-300">Min V: {fmt(hoverData.minV)}</span>
+                                <span className="text-pink-300">Max A: {fmt(hoverData.maxA)}</span>
+                                <span className="text-pink-300">Min A: {fmt(hoverData.minA)}</span>
                             </div>
                         </div>
                     )}
@@ -1990,13 +1996,13 @@
                         <div className={`absolute bottom-4 right-4 z-20 p-3 rounded text-xs shadow-lg pointer-events-none backdrop-blur-md ${isDarkMode ? 'bg-slate-800/90 text-slate-200 border border-slate-600' : 'bg-white/90 text-gray-700 border border-gray-200'}`}>
                             <h4 className={`font-bold mb-1 border-b pb-1 ${isDarkMode ? 'border-slate-600' : 'border-gray-300'}`}>{t('global_ext')}</h4>
                             {viewSettings.showBMD && (
-                                <div className="text-red-500 font-mono">{t('max_m')}: {plotData.stats.maxM.toFixed(2)} {units.mom}</div>
+                                <div className="text-red-500 font-mono">{t('max_m')}: {fmt(plotData.stats.maxM)} {units.mom}</div>
                             )}
                             {viewSettings.showSFD && (
-                                <div className="text-blue-500 font-mono">{t('max_v')}: {plotData.stats.maxV.toFixed(2)} {units.force}</div>
+                                <div className="text-blue-500 font-mono">{t('max_v')}: {fmt(plotData.stats.maxV)} {units.force}</div>
                             )}
                             {viewSettings.showAFD && (
-                                <div className="text-pink-500 font-mono">{t('max_a')}: {plotData.stats.maxA.toFixed(2)} {units.force}</div>
+                                <div className="text-pink-500 font-mono">{t('max_a')}: {fmt(plotData.stats.maxA)} {units.force}</div>
                             )}
                             {viewSettings.showDeformed && (
                                 <div className="text-emerald-600 font-mono">{t('max_d')}: {plotData.stats.maxD.toExponential(2)} {units.len}</div>
@@ -4160,7 +4166,12 @@
                                 {selectedLoad !== null && (
                                     <div className="bg-slate-700 p-2 rounded border border-slate-600 shadow-sm mt-2">
                                         <div className="flex justify-between items-center text-xs text-yellow-200 px-1 mb-2">
-                                            <span className="font-bold">{t('load')} {selectedLoad}</span>
+                                            {/* FORMATTED LOAD HEADER */}
+                                            <span className="font-bold">
+                                                {t('load')} {selectedLoad} 
+                                                {loads[selectedLoad].type !== 'settlement' && loads[selectedLoad].type !== 'dist' && 
+                                                 ` (${parseFloat((loads[selectedLoad].mag || Math.sqrt((loads[selectedLoad].fx||0)**2 + (loads[selectedLoad].fy||0)**2)).toFixed(3))} ${units.force})`}
+                                            </span>
                                             <button onClick={() => setSelectedLoad(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
                                         </div>
                                         <div className="flex gap-2">
@@ -4534,7 +4545,11 @@
                                                         return (
                                                             <div key={index} className="flex justify-between items-center bg-slate-800 p-1.5 rounded text-[10px] border border-slate-600">
                                                                 <span className="text-slate-300">
-                                                                    {l.type === 'settlement' ? 'Settlement' : `Force: ${l.fx||0}, ${l.fy||0}`}
+                                                                    {/* FORMATTED NUMBER DISPLAY */}
+                                                                    {l.type === 'settlement' 
+                                                                        ? `Settlement` 
+                                                                        : `Force: ${parseFloat((l.fx||0).toFixed(3))}, ${parseFloat((l.fy||0).toFixed(3))}`
+                                                                    }
                                                                 </span>
                                                                 {/* MODIFY START: Add Edit Button Group */}
                                                                 <div className="flex gap-1">
