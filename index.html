@@ -822,7 +822,7 @@
                                 const p2_tip = { x: pEnd.x - dir * nx * h2, y: pEnd.y - dir * ny * h2 };
                                 const p1_base = pStart;
                                 const p2_base = pEnd;
-                                if (viewSettings.showLoads) { // Ensure this check from previous step wraps the drawing
+                                if (viewSettings.showLoads) {
                                     ctx.fillStyle = fillColor;
                                     ctx.strokeStyle = distColor;
                                     ctx.beginPath();
@@ -832,23 +832,17 @@
                                     ctx.lineTo(p1_tip.x, p1_tip.y);
                                     ctx.closePath();
                                     ctx.fill(); ctx.stroke();
-                                    
                                     ctx.fillStyle = '#fef08a'; 
                                     ctx.fillText(`${fmt(w1)}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
                                     if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${fmt(w2)}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
-                                    
                                     const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
                                     for(let i=0; i<=count; i++) {
                                         const s = i/count;
                                         const tx = p1_base.x + s*(p2_base.x - p1_base.x);
                                         const ty = p1_base.y + s*(p2_base.y - p1_base.y);
                                         const mag = w1*(1-s) + w2*s;
-                                        
-                                        if (Math.abs(mag) < 0.001) continue; // Skip zero-length arrows
-
-                                        // FIX: Pass 0 to allow arrows to scale down perfectly to the outline
+                                        if (Math.abs(mag) < 0.001) continue;
                                         const arrowLen = getScaleLen(mag, 0);
-                                        
                                         const bx = tx - dir * nx * arrowLen;
                                         const by = ty - dir * ny * arrowLen;
                                         ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
