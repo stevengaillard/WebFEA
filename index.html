@@ -741,7 +741,16 @@
                         }
                     }
                     const elLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
-                    if (viewSettings.showLoads) {    
+                    elLoads.sort((a, b) => {
+                        const getMag = (l) => {
+                            if (l.type === 'dist') return Math.max(Math.abs(l.wStart || 0), Math.abs(l.wEnd || 0));
+                            if (l.type === 'point_span') return Math.abs(l.mag || 0);
+                            return 0;
+                        };
+                        return getMag(a) - getMag(b);
+                    });
+                    let distStackCount = 0;
+                    if (viewSettings.showLoads) {   
                         elLoads.forEach(l => {
                             const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
                             const baseColor = isSelected ? '#f87171' : '#facc15'; 
@@ -785,7 +794,7 @@
                                 const tay = py - ny * arrowLen;
                                 ctx.strokeStyle = baseColor; ctx.fillStyle = baseColor;
                                 ctx.beginPath(); ctx.moveTo(tax, tay); ctx.lineTo(px, py); ctx.stroke();
-                                drawArrowHead(px, py, Math.atan2(py - tay, px - tax), baseColor, arrowLen * 0.25);
+                                drawArrowHead(px, py, Math.atan2(py - tay, px - tax), baseColor, 6);
                                 ctx.fillStyle = '#fef08a'; 
                                 ctx.fillText(`${fmt(mag)}${units.force}`, tax, tay - (textSize * 0.5)); 
                             }
@@ -814,40 +823,44 @@
                                     nx = -Math.cos(scrAng);
                                     ny = Math.sin(scrAng);
                                 }
-                                const maxW = Math.max(Math.abs(w1), Math.abs(w2), 1);
-                                const visualScale = 25 / maxW; 
-                                const h1 = getScaleLen(w1, 0);
-                                const h2 = getScaleLen(w2, 0);
-                                const p1_tip = { x: pStart.x - dir * nx * h1, y: pStart.y - dir * ny * h1 };
-                                const p2_tip = { x: pEnd.x - dir * nx * h2, y: pEnd.y - dir * ny * h2 };
-                                const p1_base = pStart;
-                                const p2_base = pEnd;
-                                if (viewSettings.showLoads) {
-                                    ctx.fillStyle = fillColor;
-                                    ctx.strokeStyle = distColor;
-                                    ctx.beginPath();
-                                    ctx.moveTo(p1_base.x, p1_base.y);
-                                    ctx.lineTo(p2_base.x, p2_base.y);
-                                    ctx.lineTo(p2_tip.x, p2_tip.y);
-                                    ctx.lineTo(p1_tip.x, p1_tip.y);
-                                    ctx.closePath();
-                                    ctx.fill(); ctx.stroke();
-                                    ctx.fillStyle = '#fef08a'; 
-                                    ctx.fillText(`${fmt(w1)}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
-                                    if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${fmt(w2)}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
-                                    const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
-                                    for(let i=0; i<=count; i++) {
-                                        const s = i/count;
-                                        const tx = p1_base.x + s*(p2_base.x - p1_base.x);
-                                        const ty = p1_base.y + s*(p2_base.y - p1_base.y);
-                                        const mag = w1*(1-s) + w2*s;
-                                        if (Math.abs(mag) < 0.001) continue;
-                                        const arrowLen = getScaleLen(mag, 0);
-                                        const bx = tx - dir * nx * arrowLen;
-                                        const by = ty - dir * ny * arrowLen;
-                                        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
-                                        drawArrowHead(tx, ty, Math.atan2(ty - by, tx - bx), distColor);
-                                    }
+                                const BLOCK_SIZE = 40;
+                                const maxMag = Math.max(Math.abs(w1), Math.abs(w2));
+                                const s1 = maxMag === 0 ? 0 : Math.abs(w1) / maxMag;
+                                const s2 = maxMag === 0 ? 0 : Math.abs(w2) / maxMag;
+                                const baseOffset = distStackCount * BLOCK_SIZE; 
+                                const h1_local = s1 * BLOCK_SIZE;
+                                const h2_local = s2 * BLOCK_SIZE;
+                                const total_h1 = baseOffset + h1_local;
+                                const total_h2 = baseOffset + h2_local;
+                                distStackCount++;
+                                const p1_base = { x: pStart.x - dir * nx * baseOffset, y: pStart.y - dir * ny * baseOffset };
+                                const p2_base = { x: pEnd.x - dir * nx * baseOffset, y: pEnd.y - dir * ny * baseOffset };
+                                const p1_tip = { x: pStart.x - dir * nx * total_h1, y: pStart.y - dir * ny * total_h1 };
+                                const p2_tip = { x: pEnd.x - dir * nx * total_h2, y: pEnd.y - dir * ny * total_h2 };
+                                ctx.fillStyle = fillColor;
+                                ctx.strokeStyle = distColor;
+                                ctx.beginPath();
+                                ctx.moveTo(p1_base.x, p1_base.y);
+                                ctx.lineTo(p2_base.x, p2_base.y);
+                                ctx.lineTo(p2_tip.x, p2_tip.y);
+                                ctx.lineTo(p1_tip.x, p1_tip.y);
+                                ctx.closePath();
+                                ctx.fill(); ctx.stroke();
+                                ctx.fillStyle = '#fef08a'; 
+                                ctx.fillText(`${fmt(w1)}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
+                                if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${fmt(w2)}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
+                                const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
+                                for(let i=0; i<=count; i++) {
+                                    const s = i/count;
+                                    const tx = p1_base.x + s*(p2_base.x - p1_base.x);
+                                    const ty = p1_base.y + s*(p2_base.y - p1_base.y);
+                                    const arrowLen = h1_local * (1-s) + h2_local * s;
+                                    if (arrowLen < 1) continue; 
+                                    const bx = tx - dir * nx * arrowLen;
+                                    const by = ty - dir * ny * arrowLen;
+                                    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+                                    const headSize = Math.min(6, arrowLen * 0.4); 
+                                    drawArrowHead(tx, ty, Math.atan2(ty - by, tx - bx), distColor, headSize);
                                 }
                             }
                             ctx.restore(); 
