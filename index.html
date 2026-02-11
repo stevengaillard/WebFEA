@@ -3518,33 +3518,166 @@
             };
             const deleteNode = (index) => {
                 addToHistory();
-                // 1. Remove Node
-                const newNodes = nodes.filter((_, i) => i !== index);
                 
-                // 2. Remove connected elements and re-index remaining nodes
-                const newElements = elements
-                    .filter(el => el.n1 !== index && el.n2 !== index)
-                    .map(el => ({
-                        ...el,
-                        n1: el.n1 > index ? el.n1 - 1 : el.n1,
-                        n2: el.n2 > index ? el.n2 - 1 : el.n2
-                    }));
-                
-                // 3. Remove supports at node and re-index
-                const newSupports = supports
-                    .filter(s => s.nodeId !== index)
-                    .map(s => ({ ...s, nodeId: s.nodeId > index ? s.nodeId - 1 : s.nodeId }));
+                // 1. Check Connectivity for Merge
+                const connected = elements.filter(e => e.n1 === index || e.n2 === index);
+                let mergeData = null;
 
-                // 4. Remove loads at node/element and re-index node refs
-                const newLoads = loads
-                    .filter(l => l.nodeId !== index) // Remove point loads on this node
-                    .filter(l => l.type !== 'dist' || newElements.find(e => e.id === l.elementId)) // Remove dist loads if element deleted
-                    .map(l => l.nodeId !== undefined && l.nodeId > index ? { ...l, nodeId: l.nodeId - 1 } : l);
+                if (connected.length === 2) {
+                    const e1 = connected[0];
+                    const e2 = connected[1];
+                    
+                    // Identify the far ends of the two segments
+                    const far1 = e1.n1 === index ? e1.n2 : e1.n1;
+                    const far2 = e2.n1 === index ? e2.n2 : e2.n1;
+                    
+                    const n = nodes[index];
+                    const nA = nodes[far1];
+                    const nB = nodes[far2];
+                    
+                    // Collinearity Check (Cross Product approx 0 and Dot Product > 0 for non-overlapping)
+                    const v1x = n.x - nA.x, v1y = n.y - nA.y;
+                    const v2x = nB.x - n.x, v2y = nB.y - n.y;
+                    const cross = v1x * v2y - v1y * v2x;
+                    const dot = v1x * v2x + v1y * v2y; 
+                    
+                    // Property Check
+                    const propsMatch = e1.E === e2.E && e1.I === e2.I && e1.A === e2.A && e1.type === e2.type;
 
-                setNodes(newNodes);
-                setElements(newElements);
-                setSupports(newSupports);
-                setLoads(newLoads);
+                    if (Math.abs(cross) < 0.01 && dot > 0 && propsMatch) {
+                        mergeData = { e1, e2, far1, far2, L1: Math.sqrt(v1x**2 + v1y**2), L2: Math.sqrt(v2x**2 + v2y**2) };
+                    }
+                }
+
+                if (mergeData) {
+                    // --- MERGE SCENARIO ---
+                    const { e1, e2, far1, far2, L1, L2 } = mergeData;
+                    const newElId = Math.max(...elements.map(e => e.id), 0) + 1;
+                    
+                    // 1. Create New Merged Loads
+                    let newLoads = loads.filter(l => l.elementId !== e1.id && l.elementId !== e2.id && l.nodeId !== index);
+                    
+                    // Helper to shift loads
+                    const mapLoads = (sourceEl, offsetDist, isReversed, segLen) => {
+                        const sourceLoads = loads.filter(l => l.elementId === sourceEl.id);
+                        sourceLoads.forEach(l => {
+                            let newL = { ...l, elementId: newElId };
+                            
+                            if (l.type === 'point_span') {
+                                let d = parseFloat(l.dist !== undefined ? l.dist : segLen/2);
+                                if (isReversed) d = segLen - d; // Flip distance if element definition reversed
+                                newL.dist = offsetDist + d;
+                                
+                                // Flip angle if local and reversed? (Simplified: keep as is, usually robust enough for 90/-90)
+                            } 
+                            else if (l.type === 'dist') {
+                                let d1 = parseFloat(l.dStart || 0);
+                                let d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : segLen);
+                                let w1 = l.wStart;
+                                let w2 = l.wEnd !== undefined ? l.wEnd : w1;
+
+                                if (isReversed) {
+                                    // Flip distributed load direction
+                                    const oldD1 = d1;
+                                    d1 = segLen - d2;
+                                    d2 = segLen - oldD1;
+                                    const oldW1 = w1;
+                                    w1 = w2;
+                                    w2 = oldW1;
+                                }
+                                newL.dStart = offsetDist + d1;
+                                newL.dEnd = offsetDist + d2;
+                                newL.wStart = w1;
+                                newL.wEnd = w2;
+                            }
+                            newLoads.push(newL);
+                        });
+                    };
+
+                    // Map Segment 1 (far1 -> index)
+                    const isRev1 = (e1.n2 === far1); 
+                    mapLoads(e1, 0, isRev1, L1);
+
+                    // Map Segment 2 (index -> far2)
+                    const isRev2 = (e2.n1 === far2);
+                    mapLoads(e2, L1, isRev2, L2);
+
+                    // Convert Nodal Loads on deleted node to Point Loads
+                    const nodeLoads = loads.filter(l => l.nodeId === index && l.type === 'point');
+                    nodeLoads.forEach(nl => {
+                        const mag = Math.sqrt(nl.fx*nl.fx + nl.fy*nl.fy);
+                        if (mag > 1e-9) {
+                            const ang = Math.atan2(nl.fy, nl.fx) * 180 / Math.PI;
+                            newLoads.push({
+                                type: 'point_span',
+                                elementId: newElId,
+                                mag: parseFloat(mag.toFixed(3)),
+                                angle: parseFloat(ang.toFixed(1)),
+                                angleRef: 'global',
+                                dist: L1
+                            });
+                        }
+                    });
+
+                    // 2. Update Nodes (Remove index)
+                    const newNodes = nodes.filter((_, i) => i !== index);
+                    
+                    // 3. Update Elements
+                    // Remove e1, e2. Add newEl. Remap indices.
+                    const remap = (idx) => idx > index ? idx - 1 : idx;
+                    
+                    const remainingElements = elements
+                        .filter(e => e.id !== e1.id && e.id !== e2.id)
+                        .map(e => ({
+                            ...e,
+                            n1: remap(e.n1),
+                            n2: remap(e.n2)
+                        }));
+                    
+                    const mergedElement = {
+                        ...e1, // Copy props from e1
+                        id: newElId,
+                        n1: remap(far1),
+                        n2: remap(far2)
+                    };
+
+                    // 4. Update Supports
+                    const newSupports = supports
+                        .filter(s => s.nodeId !== index)
+                        .map(s => ({ ...s, nodeId: remap(s.nodeId) }));
+
+                    setNodes(newNodes);
+                    setElements([...remainingElements, mergedElement]);
+                    setSupports(newSupports);
+                    setLoads(newLoads);
+
+                } else {
+                    // --- STANDARD DELETE SCENARIO (Existing Logic) ---
+                    const newNodes = nodes.filter((_, i) => i !== index);
+                    
+                    const newElements = elements
+                        .filter(el => el.n1 !== index && el.n2 !== index)
+                        .map(el => ({
+                            ...el,
+                            n1: el.n1 > index ? el.n1 - 1 : el.n1,
+                            n2: el.n2 > index ? el.n2 - 1 : el.n2
+                        }));
+                    
+                    const newSupports = supports
+                        .filter(s => s.nodeId !== index)
+                        .map(s => ({ ...s, nodeId: s.nodeId > index ? s.nodeId - 1 : s.nodeId }));
+
+                    const newLoadsList = loads
+                        .filter(l => l.nodeId !== index)
+                        .filter(l => l.type !== 'dist' || newElements.find(e => e.id === l.elementId))
+                        .map(l => l.nodeId !== undefined && l.nodeId > index ? { ...l, nodeId: l.nodeId - 1 } : l);
+
+                    setNodes(newNodes);
+                    setElements(newElements);
+                    setSupports(newSupports);
+                    setLoads(newLoadsList);
+                }
+
                 setResults(null);
                 setSelectedNode(null);
             };
