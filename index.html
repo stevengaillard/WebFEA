@@ -553,15 +553,32 @@
                 if (!canvas) return;
                 const ctx = canvas.getContext('2d');
                 const fmt = (n) => parseFloat(Number(n).toFixed(3));
-                const drawArrowHead = (x, y, angle, color) => {
+                let maxLoadMag = 1;
+                loads.forEach(l => {
+                    let mag = 0;
+                    if (l.mag) mag = Math.abs(parseFloat(l.mag));
+                    if (l.wStart) mag = Math.max(mag, Math.abs(parseFloat(l.wStart)));
+                    if (l.wEnd) mag = Math.max(mag, Math.abs(parseFloat(l.wEnd)));
+                    if (l.fx || l.fy) mag = Math.max(mag, Math.sqrt(l.fx**2 + l.fy**2));
+                    if (l.m) mag = Math.max(mag, Math.abs(l.m)); // treat moment distinct or same? usually distinct but for visual scale ok
+                    
+                    if (mag > maxLoadMag) maxLoadMag = mag;
+                });
+                const maxPx = 60;
+                const minPx = 20;
+                const getScaleLen = (val, minVal = minPx) => {
+                    if (val === 0) return 0;
+                    return Math.max(minVal, (Math.abs(val) / maxLoadMag) * maxPx);
+                };
+                const drawArrowHead = (x, y, angle, color, size = 6) => {
                     ctx.save();
                     ctx.translate(x, y);
                     ctx.rotate(angle);
                     ctx.fillStyle = color;
                     ctx.beginPath();
                     ctx.moveTo(0, 0);
-                    ctx.lineTo(-6, -3);
-                    ctx.lineTo(-6, 3);
+                    ctx.lineTo(-size, -size/2);
+                    ctx.lineTo(-size, size/2);
                     ctx.closePath();
                     ctx.fill();
                     ctx.restore();
@@ -724,110 +741,124 @@
                         }
                     }
                     const elLoads = loads.filter(l => (l.type === 'dist' || l.type === 'point_span') && l.elementId === el.id);
-                    elLoads.forEach(l => {
-                        const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
-                        const baseColor = isSelected ? '#f87171' : '#facc15'; 
-                        const distColor = isSelected ? '#f87171' : '#eab308';
-                        const fillColor = isSelected ? 'rgba(248, 113, 113, 0.3)' : 'rgba(234, 179, 8, 0.2)';
-                        ctx.save(); 
-                        if (isSelected) {
-                            ctx.shadowColor = baseColor;
-                            ctx.shadowBlur = 15; 
-                            ctx.lineWidth = 3;
-                        } else {
-                            ctx.lineWidth = 1; 
-                        }
-                        const dx = drawP2.x - drawP1.x, dy = drawP2.y - drawP1.y;
-                        const len_scr = Math.sqrt(dx*dx + dy*dy); 
-                        const n1 = nodes[el.n1], n2 = nodes[el.n2];
-                        const L_phys = Math.sqrt((n2.x - n1.x)**2 + (n2.y - n1.y)**2);
-                        const dir = 1;
-                        if (l.type === 'point_span') {
-                            const dist = parseFloat(l.dist !== undefined ? l.dist : L_phys/2);
-                            const t = dist / L_phys;
-                            const px = drawP1.x + t * dx;
-                            const py = drawP1.y + t * dy;
-                            const mag = parseFloat(l.mag || 10);
-                            let ang = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
-                            if (l.angleRef === 'local') {
-                                const beamAngWorld = Math.atan2(n2.y - n1.y, n2.x - n1.x);
-                                ang += beamAngWorld;
-                            }
-                            const scrAng = -ang; 
-                            let nx, ny;
-                            if (Math.abs(dy) > Math.abs(dx)) {
-                                nx = Math.cos(scrAng);
-                                ny = -Math.sin(scrAng);
+                    if (viewSettings.showLoads) {    
+                        elLoads.forEach(l => {
+                            const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
+                            const baseColor = isSelected ? '#f87171' : '#facc15'; 
+                            const distColor = isSelected ? '#f87171' : '#eab308';
+                            const fillColor = isSelected ? 'rgba(248, 113, 113, 0.3)' : 'rgba(234, 179, 8, 0.2)';
+                            ctx.save(); 
+                            if (isSelected) {
+                                ctx.shadowColor = baseColor;
+                                ctx.shadowBlur = 15; 
+                                ctx.lineWidth = 3;
                             } else {
-                                nx = -Math.cos(scrAng);
-                                ny = Math.sin(scrAng);
+                                ctx.lineWidth = 1; 
                             }
-                            const arrowLen = 30;
-                            const tax = px - nx * arrowLen;
-                            const tay = py - ny * arrowLen;
-                            ctx.strokeStyle = baseColor; ctx.fillStyle = baseColor;
-                            ctx.beginPath(); ctx.moveTo(tax, tay); ctx.lineTo(px, py); ctx.stroke();
-                            drawArrowHead(px, py, Math.atan2(py - tay, px - tax), baseColor);
-                            ctx.fillStyle = '#fef08a'; 
-                            ctx.fillText(`${fmt(mag)}${units.force}`, tax, tay - (textSize * 0.5)); 
-                        }
-                        else if (l.type === 'dist') {
-                            const raw_d1 = parseFloat(l.dStart || 0);
-                            const raw_d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : L_phys);
-                            const d1 = Math.max(0, Math.min(L_phys, raw_d1));
-                            const d2 = Math.max(0, Math.min(L_phys, raw_d2));
-                            const w1 = parseFloat(l.wStart || 0);
-                            const w2 = parseFloat(l.wEnd !== undefined ? l.wEnd : w1);
-                            const t1 = d1 / L_phys;
-                            const t2 = d2 / L_phys;
-                            const pStart = { x: drawP1.x + t1*dx, y: drawP1.y + t1*dy };
-                            const pEnd = { x: drawP1.x + t2*dx, y: drawP1.y + t2*dy };
-                            let ang = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
-                            if (l.angleRef === 'local') {
-                                const beamAngWorld = Math.atan2(n2.y - n1.y, n2.x - n1.x);
-                                ang += beamAngWorld;
+                            const dx = drawP2.x - drawP1.x, dy = drawP2.y - drawP1.y;
+                            const len_scr = Math.sqrt(dx*dx + dy*dy); 
+                            const n1 = nodes[el.n1], n2 = nodes[el.n2];
+                            const L_phys = Math.sqrt((n2.x - n1.x)**2 + (n2.y - n1.y)**2);
+                            const dir = 1;
+                            if (l.type === 'point_span') {
+                                const dist = parseFloat(l.dist !== undefined ? l.dist : L_phys/2);
+                                const t = dist / L_phys;
+                                const px = drawP1.x + t * dx;
+                                const py = drawP1.y + t * dy;
+                                const mag = parseFloat(l.mag || 10);
+                                let ang = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
+                                if (l.angleRef === 'local') {
+                                    const beamAngWorld = Math.atan2(n2.y - n1.y, n2.x - n1.x);
+                                    ang += beamAngWorld;
+                                }
+                                const scrAng = -ang; 
+                                let nx, ny;
+                                if (Math.abs(dy) > Math.abs(dx)) {
+                                    nx = Math.cos(scrAng);
+                                    ny = -Math.sin(scrAng);
+                                } else {
+                                    nx = -Math.cos(scrAng);
+                                    ny = Math.sin(scrAng);
+                                }
+                                const arrowLen = getScaleLen(mag); 
+                                const tax = px - nx * arrowLen;
+                                const tay = py - ny * arrowLen;
+                                ctx.strokeStyle = baseColor; ctx.fillStyle = baseColor;
+                                ctx.beginPath(); ctx.moveTo(tax, tay); ctx.lineTo(px, py); ctx.stroke();
+                                drawArrowHead(px, py, Math.atan2(py - tay, px - tax), baseColor, arrowLen * 0.25);
+                                ctx.fillStyle = '#fef08a'; 
+                                ctx.fillText(`${fmt(mag)}${units.force}`, tax, tay - (textSize * 0.5)); 
                             }
-                            const scrAng = -ang; 
-                            let nx, ny;
-                            if (Math.abs(dy) > Math.abs(dx)) {
-                                nx = Math.cos(scrAng);
-                                ny = -Math.sin(scrAng);
-                            } else {
-                                nx = -Math.cos(scrAng);
-                                ny = Math.sin(scrAng);
+                            else if (l.type === 'dist') {
+                                const raw_d1 = parseFloat(l.dStart || 0);
+                                const raw_d2 = parseFloat(l.dEnd !== undefined ? l.dEnd : L_phys);
+                                const d1 = Math.max(0, Math.min(L_phys, raw_d1));
+                                const d2 = Math.max(0, Math.min(L_phys, raw_d2));
+                                const w1 = parseFloat(l.wStart || 0);
+                                const w2 = parseFloat(l.wEnd !== undefined ? l.wEnd : w1);
+                                const t1 = d1 / L_phys;
+                                const t2 = d2 / L_phys;
+                                const pStart = { x: drawP1.x + t1*dx, y: drawP1.y + t1*dy };
+                                const pEnd = { x: drawP1.x + t2*dx, y: drawP1.y + t2*dy };
+                                let ang = (parseFloat(l.angle !== undefined ? l.angle : -90) * Math.PI) / 180;
+                                if (l.angleRef === 'local') {
+                                    const beamAngWorld = Math.atan2(n2.y - n1.y, n2.x - n1.x);
+                                    ang += beamAngWorld;
+                                }
+                                const scrAng = -ang; 
+                                let nx, ny;
+                                if (Math.abs(dy) > Math.abs(dx)) {
+                                    nx = Math.cos(scrAng);
+                                    ny = -Math.sin(scrAng);
+                                } else {
+                                    nx = -Math.cos(scrAng);
+                                    ny = Math.sin(scrAng);
+                                }
+                                const maxW = Math.max(Math.abs(w1), Math.abs(w2), 1);
+                                const visualScale = 25 / maxW; 
+                                const h1 = getScaleLen(w1, 0);
+                                const h2 = getScaleLen(w2, 0);
+                                const p1_tip = { x: pStart.x - dir * nx * h1, y: pStart.y - dir * ny * h1 };
+                                const p2_tip = { x: pEnd.x - dir * nx * h2, y: pEnd.y - dir * ny * h2 };
+                                const p1_base = pStart;
+                                const p2_base = pEnd;
+                                if (viewSettings.showLoads) { // Ensure this check from previous step wraps the drawing
+                                    ctx.fillStyle = fillColor;
+                                    ctx.strokeStyle = distColor;
+                                    ctx.beginPath();
+                                    ctx.moveTo(p1_base.x, p1_base.y);
+                                    ctx.lineTo(p2_base.x, p2_base.y);
+                                    ctx.lineTo(p2_tip.x, p2_tip.y);
+                                    ctx.lineTo(p1_tip.x, p1_tip.y);
+                                    ctx.closePath();
+                                    ctx.fill(); ctx.stroke();
+                                    
+                                    ctx.fillStyle = '#fef08a'; 
+                                    ctx.fillText(`${fmt(w1)}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
+                                    if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${fmt(w2)}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
+                                    
+                                    const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
+                                    for(let i=0; i<=count; i++) {
+                                        const s = i/count;
+                                        const tx = p1_base.x + s*(p2_base.x - p1_base.x);
+                                        const ty = p1_base.y + s*(p2_base.y - p1_base.y);
+                                        const mag = w1*(1-s) + w2*s;
+                                        
+                                        if (Math.abs(mag) < 0.001) continue; // Skip zero-length arrows
+
+                                        // FIX: Pass 0 to allow arrows to scale down perfectly to the outline
+                                        const arrowLen = getScaleLen(mag, 0);
+                                        
+                                        const bx = tx - dir * nx * arrowLen;
+                                        const by = ty - dir * ny * arrowLen;
+                                        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+                                        drawArrowHead(tx, ty, Math.atan2(ty - by, tx - bx), distColor);
+                                    }
+                                }
                             }
-                            const maxW = Math.max(Math.abs(w1), Math.abs(w2), 1);
-                            const visualScale = 25 / maxW; 
-                            const p1_tip = { x: pStart.x - dir * nx * w1 * visualScale, y: pStart.y - dir * ny * w1 * visualScale };
-                            const p2_tip = { x: pEnd.x - dir * nx * w2 * visualScale, y: pEnd.y - dir * ny * w2 * visualScale };
-                            const p1_base = pStart;
-                            const p2_base = pEnd;
-                            ctx.fillStyle = fillColor;
-                            ctx.strokeStyle = distColor;
-                            ctx.beginPath();
-                            ctx.moveTo(p1_base.x, p1_base.y);
-                            ctx.lineTo(p2_base.x, p2_base.y);
-                            ctx.lineTo(p2_tip.x, p2_tip.y);
-                            ctx.lineTo(p1_tip.x, p1_tip.y);
-                            ctx.closePath();
-                            ctx.fill(); ctx.stroke();
-                            ctx.fillStyle = '#fef08a'; 
-                            ctx.fillText(`${fmt(w1)}${units.dist}`, p1_tip.x, p1_tip.y - (textSize * 0.6)); 
-                            if(Math.abs(w1 - w2) > 0.01) ctx.fillText(`${fmt(w2)}${units.dist}`, p2_tip.x, p2_tip.y - (textSize * 0.6)); 
-                            const count = Math.max(2, Math.floor((t2-t1) * len_scr / 15));
-                            for(let i=0; i<=count; i++) {
-                                const s = i/count;
-                                const tx = p1_base.x + s*(p2_base.x - p1_base.x);
-                                const ty = p1_base.y + s*(p2_base.y - p1_base.y);
-                                const mag = w1*(1-s) + w2*s;
-                                const bx = tx - dir * nx * mag * visualScale;
-                                const by = ty - dir * ny * mag * visualScale;
-                                ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
-                                drawArrowHead(tx, ty, Math.atan2(ty - by, tx - bx), distColor);
-                            }
-                        }
-                        ctx.restore(); 
-                    });
+                            ctx.restore(); 
+                        });
+                    }
                     if (plotData) {
                         const d = plotData.diagrams.find(d => d && d.id === el.id);
                         if (d && d.pts.length > 0) {
@@ -1095,44 +1126,48 @@
                         ctx.restore();
                     };
                     const nodeLoads = loads.filter(l => (!l.type || l.type === 'point' || l.type === 'settlement') && l.nodeId === i);
-                    nodeLoads.forEach(l => {
-                        const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
-                        const color = isSelected ? '#f87171' : (l.type === 'settlement' ? '#a855f7' : '#eab308');
-                        ctx.save();
-                        if (isSelected) {
-                            ctx.shadowColor = color;
-                            ctx.shadowBlur = 15;
-                            ctx.lineWidth = 3;
-                        }
-                        ctx.strokeStyle = color; ctx.fillStyle = color;
-                        const arrowLen = 30; 
-                        const gap = textSize * 0.6;
-                        if(l.type === 'settlement') {
-} else {
-                            if (l.fx != 0) { 
-                                const dir = l.fx > 0 ? 1 : -1;
-                                const tipX = p.x + dir * arrowLen;
-                                ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tipX, p.y); ctx.stroke(); 
-                                drawArrowHead(tipX, p.y, l.fx > 0 ? 0 : Math.PI, color);
-                                const txtOff = l.fx > 0 ? gap : -(textSize * 4); 
-                                ctx.fillText(`${fmt(l.fx)}${units.force}`, tipX + txtOff, p.y + (textSize * 0.3));
+                    if (viewSettings.showLoads) {
+                        nodeLoads.forEach(l => {
+                            const isSelected = selectedLoad !== null && loads[selectedLoad] === l;
+                            const color = isSelected ? '#f87171' : (l.type === 'settlement' ? '#a855f7' : '#eab308');
+                            ctx.save();
+                            if (isSelected) {
+                                ctx.shadowColor = color;
+                                ctx.shadowBlur = 15;
+                                ctx.lineWidth = 3;
                             }
-                            if (l.fy != 0) { 
-                                const dir = l.fy > 0 ? 1 : -1;
-                                const tipY = p.y - dir * arrowLen;
-                                ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, tipY); ctx.stroke(); 
-                                drawArrowHead(p.x, tipY, l.fy > 0 ? -Math.PI/2 : Math.PI/2, color);
-                                ctx.fillText(`${fmt(l.fy)}${units.force}`, p.x + gap, tipY + (textSize * 0.3));
+                            ctx.strokeStyle = color; ctx.fillStyle = color;
+                            const arrowLen = 30; 
+                            const gap = textSize * 0.6;
+                            if(l.type === 'settlement') {
+                            } else {
+                                if (l.fx != 0) { 
+                                    const len = getScaleLen(l.fx); // Dynamic Length
+                                    const dir = l.fx > 0 ? 1 : -1;
+                                    const tipX = p.x + dir * len;
+                                    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tipX, p.y); ctx.stroke(); 
+                                    drawArrowHead(tipX, p.y, l.fx > 0 ? 0 : Math.PI, color, len * 0.25);
+                                    const txtOff = l.fx > 0 ? gap : -(textSize * 4); 
+                                    ctx.fillText(`${fmt(l.fx)}${units.force}`, tipX + txtOff, p.y + (textSize * 0.3));
+                                }
+                                if (l.fy != 0) { 
+                                    const len = getScaleLen(l.fy); // Dynamic Length
+                                    const dir = l.fy > 0 ? 1 : -1;
+                                    const tipY = p.y - dir * len;
+                                    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, tipY); ctx.stroke(); 
+                                    drawArrowHead(p.x, tipY, l.fy > 0 ? -Math.PI/2 : Math.PI/2, color, len * 0.25);
+                                    ctx.fillText(`${fmt(l.fy)}${units.force}`, p.x + gap, tipY + (textSize * 0.3));
+                                }
+                                if (l.m != 0) {
+                                    ctx.fillText(`${fmt(l.m)}${units.mom}`, p.x + (textSize), p.y - (textSize));
+                                    ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, l.m > 0 ? -Math.PI/2 : Math.PI/2, l.m > 0); ctx.stroke();
+                                    const tipAng = l.m > 0 ? -Math.PI/2 : Math.PI/2;
+                                    drawArrowHead(p.x + 12*Math.cos(tipAng), p.y + 12*Math.sin(tipAng), tipAng + (l.m>0? -Math.PI/2 : Math.PI/2), color);
+                                }
                             }
-                            if (l.m != 0) {
-                                ctx.fillText(`${fmt(l.m)}${units.mom}`, p.x + (textSize), p.y - (textSize));
-                                ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, l.m > 0 ? -Math.PI/2 : Math.PI/2, l.m > 0); ctx.stroke();
-                                const tipAng = l.m > 0 ? -Math.PI/2 : Math.PI/2;
-                                drawArrowHead(p.x + 12*Math.cos(tipAng), p.y + 12*Math.sin(tipAng), tipAng + (l.m>0? -Math.PI/2 : Math.PI/2), color);
-                            }
-                        }
-                        ctx.restore();
-                    });
+                            ctx.restore();
+                        });
+                    }
                 });
                 if (hoverData) {
                     const el = elements.find(e => e.id === hoverData.elId);
@@ -1328,6 +1363,9 @@
                 }
                 let clickedLoadIndex = null;
                 if (clickedNodeId === null) {
+                    const loadHits = [];
+                    let minElDist = 20;
+
                     loads.forEach((l, index) => {
                         let hit = false;
                         const fixedArrowLen = 30; 
@@ -1359,8 +1397,18 @@
                                 }
                             }
                         }
-                        if (hit) clickedLoadIndex = index;
+                        if (hit) loadHits.push(index);
                     });
+                    if (loadHits.length > 0) {
+                        loadHits.sort((a, b) => b - a);
+                        if (selectedLoad !== null && loadHits.includes(selectedLoad)) {
+                            const currentPos = loadHits.indexOf(selectedLoad);
+                            const nextPos = (currentPos + 1) % loadHits.length;
+                            clickedLoadIndex = loadHits[nextPos];
+                        } else {
+                            clickedLoadIndex = loadHits[0];
+                        }
+                    }
                 }
                 onCanvasInteract({ type: 'click', worldPos, snappedPos, nodeId: clickedNodeId, elementId: clickedElementId, loadIndex: clickedLoadIndex });
             };
@@ -1730,6 +1778,7 @@
                 bmd: "Bending Moment (BMD)",
                 afd: "Axial Force (AFD)",
                 show_react: "Show Reactions",
+                show_loads: "Show Loads",
                 def_scale: "Deformation Scale",
                 dia_scale: "Diagram Scale",
                 text_size: "Text Size",
@@ -1961,6 +2010,7 @@
                 sfd: "剪力圖 (SFD)",
                 bmd: "彎矩圖 (BMD)",
                 afd: "軸力圖 (AFD)",
+                show_loads: "顯示負載",
                 show_react: "顯示反力",
                 def_scale: "變形比例",
                 dia_scale: "圖表比例",
@@ -2194,7 +2244,7 @@
             const [selectedNode, setSelectedNode] = useState(null);
             const [selectedElement, setSelectedElement] = useState(null);
             const [selectedLoad, setSelectedLoad] = useState(null);
-            const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, defScale: 1, diaScale: 1 });
+            const [viewSettings, setViewSettings] = useState({ showDeformed: false, showSFD: false, showBMD: false, showAFD: false, showReactions: true, showLoads: true,defScale: 1, diaScale: 1 });
             const [activeTab, setActiveTab] = useState('geo');
             const [textSize, setTextSize] = useState(11);
             const [suppInput, setSuppInput] = useState({ type: 'fixed', angle: 0, nodeId: '', kx: 0, ky: 10000, km: 0 });
@@ -3208,6 +3258,18 @@
                                             {}
                                         </select>
                                     </div>
+                                    <div className="flex items-center gap-1 ml-2 pl-2 border-l border-gray-500/30" title={t('text_size')}>
+                                        <Icon name="type" className={`w-3 h-3 ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`} />
+                                        <input 
+                                            type="range" 
+                                            min="8" 
+                                            max="30" 
+                                            step="1" 
+                                            value={textSize} 
+                                            onChange={(e) => setTextSize(Number(e.target.value))} 
+                                            className="w-12 h-1 bg-gray-400/50 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                        />
+                                    </div>
                                 </div>
                             </div>
                             <div className="h-6 w-px bg-slate-700/50 mx-1 shrink-0"></div>
@@ -3271,7 +3333,7 @@
                                             <span className="font-bold">
                                                 {t('load')} {selectedLoad} 
                                                 {loads[selectedLoad].type !== 'settlement' && loads[selectedLoad].type !== 'dist' && 
-                                                 ` (${parseFloat((loads[selectedLoad].mag || Math.sqrt((loads[selectedLoad].fx||0)**2 + (loads[selectedLoad].fy||0)**2)).toFixed(3))} ${units.force})`}
+                                                ` (${parseFloat(loads[selectedLoad].mag || Math.sqrt((loads[selectedLoad].fx||0)**2 + (loads[selectedLoad].fy||0)**2)).toFixed(3)} ${units.force})`}
                                             </span>
                                             <button onClick={() => setSelectedLoad(null)} className="text-slate-400 hover:text-white"><Icon name="x" className="w-3 h-3" /></button>
                                         </div>
@@ -3494,6 +3556,13 @@
                                         {t('afd')}
                                     </label>
                                     <div className="h-px bg-slate-700 my-1"></div>
+                                    <label className="flex items-center gap-3 text-[11px] text-slate-300 cursor-pointer hover:text-white transition-colors">
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${viewSettings.showLoads ? 'bg-yellow-600 border-yellow-500' : 'border-slate-500 bg-slate-900'}`}>
+                                            {viewSettings.showLoads && <Icon name="check" className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <input type="checkbox" className="hidden" checked={viewSettings.showLoads} onChange={e=>setViewSettings({...viewSettings, showLoads:e.target.checked})} />
+                                        {t('show_loads')}
+                                    </label>
                                     <label className="flex items-center gap-3 text-[11px] text-slate-300 cursor-pointer hover:text-white transition-colors">
                                         <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${viewSettings.showReactions ? 'bg-green-600 border-green-500' : 'border-slate-500 bg-slate-900'}`}>
                                             {viewSettings.showReactions && <Icon name="check" className="w-3 h-3 text-white" />}
